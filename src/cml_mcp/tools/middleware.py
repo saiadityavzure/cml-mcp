@@ -186,6 +186,10 @@ class CustomHttpRequestMiddleware(Middleware):
         return default_enabled
 
     async def on_request(self, context: MiddlewareContext, call_next) -> Any:
+        # Skip auth for SSE handshake GET requests
+        if hasattr(context, 'request') and context.request.method == 'GET':
+            return await call_next(context)
+
         # Import here to avoid circular dependency
         from cml_mcp.tools.dependencies import (
             _pyats_auth_pass,
@@ -202,6 +206,8 @@ class CustomHttpRequestMiddleware(Middleware):
         headers = get_http_headers(
             include={"x-cml-server-url", "x-cml-verify-ssl", "x-authorization", "x-pyats-authorization", "x-pyats-enable"}
         )
+
+        # Resolve CML URL — from header or fall back to .env
         cml_url = headers.get("x-cml-server-url")
         if not cml_url:
             if settings.cml_url:
@@ -214,28 +220,61 @@ class CustomHttpRequestMiddleware(Middleware):
                     )
                 )
         else:
-            # Validate the server URL is allowed.
+            # Validate the server URL is allowed
             CustomHttpRequestMiddleware._validate_url(cml_url, settings.cml_allowed_urls, settings.cml_url_pattern)
+
         verify_ssl_header = headers.get("x-cml-verify-ssl", "").lower()
         verify_ssl = verify_ssl_header == "true"
 
+        # Resolve credentials — from X-Authorization header or fall back to .env
         auth_header = headers.get("x-authorization")
         if not auth_header or not auth_header.startswith("Basic "):
-            raise McpError(ErrorData(message="Unauthorized: Missing or invalid X-Authorization header", code=-31002))
-        parts = auth_header.split(" ", 1)
-        if len(parts) != 2 or parts[0].lower() != "basic":
-            raise McpError(ErrorData(message="Invalid X-Authorization header format. Expected 'Basic <credentials>'", code=-31001))
-        try:
-            decoded = base64.b64decode(parts[1]).decode("utf-8")
-            username, password = decoded.split(":", 1)
-        except Exception:
-            raise McpError(ErrorData(message="Failed to decode Basic authentication credentials", code=-31002))
+            # Fall back to .env credentials
+            if settings.cml_username and settings.cml_password:
+                username = settings.cml_username
+                password = (
+                    settings.cml_password.get_secret_value()
+                    if hasattr(settings.cml_password, "get_secret_value")
+                    else settings.cml_password
+                )
+                logger.debug("No X-Authorization header provided; using .env credentials")
+            else:
+                raise McpError(
+                    ErrorData(
+                        message="Unauthorized: Missing or invalid X-Authorization header and no default credentials configured",
+                        code=-31002,
+                    )
+                )
+        else:
+            parts = auth_header.split(" ", 1)
+            if len(parts) != 2 or parts[0].lower() != "basic":
+                raise McpError(
+                    ErrorData(
+                        message="Invalid X-Authorization header format. Expected 'Basic <credentials>'",
+                        code=-31001,
+                    )
+                )
+            try:
+                decoded = base64.b64decode(parts[1]).decode("utf-8")
+                username, password = decoded.split(":", 1)
+            except Exception:
+                raise McpError(
+                    ErrorData(
+                        message="Failed to decode Basic authentication credentials",
+                        code=-31002,
+                    )
+                )
+
+        # Handle optional PyATS authorization
         pyats_header = headers.get("x-pyats-authorization")
         if pyats_header and pyats_header.startswith("Basic "):
             pyats_parts = pyats_header.split(" ", 1)
             if len(pyats_parts) != 2 or pyats_parts[0].lower() != "basic":
                 raise McpError(
-                    ErrorData(message="Invalid X-PyATS-Authorization header format. Expected 'Basic <credentials>'", code=-31001)
+                    ErrorData(
+                        message="Invalid X-PyATS-Authorization header format. Expected 'Basic <credentials>'",
+                        code=-31001,
+                    )
                 )
             try:
                 pyats_decoded = base64.b64decode(pyats_parts[1]).decode("utf-8")
@@ -243,20 +282,34 @@ class CustomHttpRequestMiddleware(Middleware):
                 _pyats_username.set(pyats_username)
                 _pyats_password.set(pyats_password)
             except Exception:
-                raise McpError(ErrorData(message="Failed to decode Basic authentication credentials for PyATS", code=-31002))
+                raise McpError(
+                    ErrorData(
+                        message="Failed to decode Basic authentication credentials for PyATS",
+                        code=-31002,
+                    )
+                )
             pyats_enable_header = headers.get("x-pyats-enable")
             if pyats_enable_header and pyats_enable_header.startswith("Basic "):
                 pyats_enable_parts = pyats_enable_header.split(" ", 1)
                 if len(pyats_enable_parts) != 2 or pyats_enable_parts[0].lower() != "basic":
-                    raise McpError(ErrorData(message="Invalid X-PyATS-Enable header format. Expected 'Basic <credentials>'", code=-31001))
+                    raise McpError(
+                        ErrorData(
+                            message="Invalid X-PyATS-Enable header format. Expected 'Basic <credentials>'",
+                            code=-31001,
+                        )
+                    )
                 try:
                     pyats_enable_decoded = base64.b64decode(pyats_enable_parts[1]).decode("utf-8")
-                    pyats_enable_password = pyats_enable_decoded
-                    _pyats_auth_pass.set(pyats_enable_password)
+                    _pyats_auth_pass.set(pyats_enable_decoded)
                 except Exception:
-                    raise McpError(ErrorData(message="Failed to decode Basic authentication credentials for PyATS Enable", code=-31002))
+                    raise McpError(
+                        ErrorData(
+                            message="Failed to decode Basic authentication credentials for PyATS Enable",
+                            code=-31002,
+                        )
+                    )
 
-        # Create a new client for this request.
+        # Create a new CML client for this request
         request_client = CMLClient(cml_url, username, password, transport="http", verify_ssl=verify_ssl)
         try:
             await request_client.login()
@@ -271,22 +324,18 @@ class CustomHttpRequestMiddleware(Middleware):
             logger.debug(f"Request to {cml_url} completed successfully")
             return result
         except Exception as request_error:
-            # Log request processing errors for diagnostics
             logger.warning(
                 f"Request to {cml_url} failed: {type(request_error).__name__}: {request_error}",
-                exc_info=False,  # Don't need full trace for client disconnects
+                exc_info=False,
             )
             raise
         finally:
-            # Clean up the client after the request
             try:
                 await request_client.close()
                 logger.debug(f"Successfully closed client for request to {cml_url}")
             except Exception as cleanup_error:
-                # Log but don't raise - we don't want cleanup failures to mask the actual error
                 logger.error(f"Failed to close HTTP client for {cml_url}: {cleanup_error}", exc_info=True)
             finally:
-                # Always clear the context var even if cleanup fails
                 _request_client.set(None)
 
     async def on_list_tools(self, context: MiddlewareContext, call_next) -> list:

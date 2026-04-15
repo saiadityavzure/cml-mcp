@@ -65,7 +65,7 @@ server_mcp = FastMCP(
 app = None
 if settings.cml_mcp_transport == "http":
     server_mcp.add_middleware(middleware.CustomHttpRequestMiddleware())
-    app = server_mcp.http_app()
+    app = server_mcp.http_app(transport=os.getenv("CML_MCP_HTTP_TRANSPORT", "http"))
 
 # Register all tools from modules
 logger.info("Registering tools...")

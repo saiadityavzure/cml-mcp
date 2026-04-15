@@ -1,0 +1,11 @@
+services:
+  cml-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cml-mcp
+    restart: unless-stopped
+    ports:
+      - "9006:9006"
+    env_file:
+      - .env
