@@ -6,7 +6,7 @@ services:
     container_name: cml-mcp
     restart: unless-stopped
     ports:
-      - "9006:9000"
+      - "${CML_MCP_PORT:-9000}:${CML_MCP_PORT:-9000}"
     env_file:
       - .env
     volumes:
