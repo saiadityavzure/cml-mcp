@@ -68,9 +68,20 @@ class CMLClient(object):
 
         self.base_url = host.rstrip("/")
         self.api_base = f"{self.base_url}/api/v0"
-        self.vclient = virl2_client.ClientLibrary(host, username, password, ssl_verify=verify_ssl, client_type=MCP_CLIENT_IDENTIFIER)
+        self._vclient: virl2_client.ClientLibrary | None = None
+        self._vclient_host = host
         self.client = httpx.AsyncClient(verify=verify_ssl, timeout=API_TIMEOUT)
         self.client.headers.update({"X-CML-CLIENT": MCP_CLIENT_IDENTIFIER})
+
+    @property
+    def vclient(self) -> virl2_client.ClientLibrary:
+        """Lazy-initialize virl2_client.ClientLibrary on first access (CLI tool only)."""
+        if self._vclient is None:
+            self._vclient = virl2_client.ClientLibrary(
+                self._vclient_host, self.username, self.password,
+                ssl_verify=self.verify_ssl, client_type=MCP_CLIENT_IDENTIFIER,
+            )
+        return self._vclient
 
     @property
     def token(self) -> str | None:

@@ -293,18 +293,27 @@ if USE_MOCKS:
     cml_mcp.cml_client.CMLClient = lambda *args, **kwargs: MockCMLClient()
 
 
+MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "http://localhost:9006/sse")
+
+
 @pytest.fixture()
 async def main_mcp_client():
     """
     Main MCP client fixture for testing.
-    Works with both mock and live modes.
+    - Mock mode: uses in-memory FastMCP transport
+    - Live mode: connects to the running HTTP/SSE server at MCP_SERVER_URL
     """
     from fastmcp.client import Client
 
-    from cml_mcp.server import server_mcp
-
-    async with Client(transport=server_mcp) as mcp_client:
-        yield mcp_client
+    if USE_MOCKS:
+        from cml_mcp.server import server_mcp
+        async with Client(transport=server_mcp) as mcp_client:
+            yield mcp_client
+    else:
+        from fastmcp.client.transports import SSETransport
+        transport = SSETransport(MCP_SERVER_URL)
+        async with Client(transport=transport) as mcp_client:
+            yield mcp_client
 
 
 def pytest_configure(config):

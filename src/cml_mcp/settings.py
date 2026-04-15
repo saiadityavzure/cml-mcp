@@ -76,6 +76,10 @@ class Settings(BaseSettings):
         default=None,
         description="Path to a YAML file specifying access control lists for various MCP capabilities (only used in HTTP transport mode).",
     )
+    cml_mcp_payload_log_file: str | None = Field(
+        default=None,
+        description="Path to a file for logging tool call payloads and responses. If not set, payload logging is disabled.",
+    )
 
 
 settings = Settings()

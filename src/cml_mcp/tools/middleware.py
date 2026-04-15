@@ -27,8 +27,10 @@ Middleware module for HTTP request handling and ACL management.
 """
 
 import base64
+import json
 import logging
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +46,7 @@ from cml_mcp.cml_client import CMLClient
 from cml_mcp.settings import settings
 
 logger = logging.getLogger("cml-mcp.middleware")
+payload_logger = logging.getLogger("cml-mcp.payloads")
 
 # ACL data
 acl_data: dict[str, Any] = {}
@@ -357,4 +360,46 @@ class CustomHttpRequestMiddleware(Middleware):
         if not await CustomHttpRequestMiddleware.check_tool_enabled(context.message.name, client):
             raise ToolError(f"Tool '{context.message.name}' is disabled by server configuration")
 
-        return await call_next(context)
+        tool_name = context.message.name
+        arguments = context.message.arguments or {}
+        timestamp = datetime.now(timezone.utc).isoformat()
+
+        if payload_logger.handlers:
+            payload_logger.info(json.dumps({
+                "timestamp": timestamp,
+                "event": "tool_call",
+                "tool": tool_name,
+                "payload": arguments,
+            }, default=str))
+
+        try:
+            result = await call_next(context)
+        except Exception as exc:
+            if payload_logger.handlers:
+                payload_logger.info(json.dumps({
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "event": "tool_error",
+                    "tool": tool_name,
+                    "error": str(exc),
+                }, default=str))
+            raise
+
+        if payload_logger.handlers:
+            # Serialize MCP content objects (TextContent, etc.) cleanly
+            if isinstance(result, list):
+                serialized = [
+                    item.model_dump() if hasattr(item, "model_dump") else item
+                    for item in result
+                ]
+            elif hasattr(result, "model_dump"):
+                serialized = result.model_dump()
+            else:
+                serialized = result
+            payload_logger.info(json.dumps({
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "event": "tool_response",
+                "tool": tool_name,
+                "response": serialized,
+            }, default=str))
+
+        return result

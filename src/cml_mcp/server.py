@@ -29,6 +29,8 @@ This module initializes the FastMCP server and registers all tools from modular 
 
 import logging
 import os
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 from fastmcp import FastMCP
 
@@ -49,6 +51,23 @@ if not logger.handlers:
     logger.addHandler(handler)
     # Allow propagation to ensure all child loggers (cml-mcp.*) inherit this configuration
     logger.propagate = False  # Don't propagate to root, but children will inherit our handler
+
+# Set up payload logger if configured
+payload_logger = logging.getLogger("cml-mcp.payloads")
+if settings.cml_mcp_payload_log_file:
+    log_path = Path(settings.cml_mcp_payload_log_file)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    payload_handler = RotatingFileHandler(
+        log_path,
+        maxBytes=10 * 1024 * 1024,  # 10 MB
+        backupCount=5,
+        encoding="utf-8",
+    )
+    payload_handler.setFormatter(logging.Formatter("%(message)s"))
+    payload_logger.addHandler(payload_handler)
+    payload_logger.setLevel(logging.INFO)
+    payload_logger.propagate = False
+    logger.info(f"Payload logging enabled → {log_path}")
 
 # Load ACL configuration if using HTTP transport
 if settings.cml_mcp_transport == "http":

@@ -6,6 +6,8 @@ services:
     container_name: cml-mcp
     restart: unless-stopped
     ports:
-      - "9006:9006"
+      - "9006:9000"
     env_file:
       - .env
+    volumes:
+      - ./logs:/app/logs
