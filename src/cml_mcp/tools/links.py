@@ -5,6 +5,7 @@
 Link management tools for CML MCP server.
 """
 
+import json
 import logging
 
 import httpx
@@ -29,7 +30,7 @@ def register_tools(mcp):
     )
     async def connect_two_nodes(
         lid: UUID4Type,
-        link_info: LinkCreate | dict,
+        link_info: LinkCreate | dict | str,
     ) -> UUID4Type:
         """
         Create link between two interfaces. Returns link UUID.
@@ -38,9 +39,10 @@ def register_tools(mcp):
         """
         client = get_cml_client_dep()
         try:
-            # XXX The dict usage is a workaround for some LLMs that pass a JSON string
-            # representation of the argument object.
-            if isinstance(link_info, dict):
+            # Workaround for LLMs that pass link_info as a JSON string instead of a dict
+            if isinstance(link_info, str):
+                link_info = LinkCreate(**json.loads(link_info))
+            elif isinstance(link_info, dict):
                 link_info = LinkCreate(**link_info)
             resp = await client.post(f"/labs/{lid}/links", data=link_info.model_dump(mode="json"))
             return UUID4Type(resp["id"])
