@@ -5,6 +5,7 @@
 Annotation management tools for CML MCP server.
 """
 
+import json
 import logging
 
 import httpx
@@ -96,8 +97,13 @@ def register_tools(mcp):
         """
         client = get_cml_client_dep()
         try:
-            # XXX The dict usage is a workaround for some LLMs that pass a JSON string
+            # XXX The dict/str handling is a workaround for some LLMs that pass a JSON string
             # representation of the argument object.
+            if isinstance(annotation, str):
+                try:
+                    annotation = json.loads(annotation)
+                except Exception as parse_err:
+                    raise ToolError(f"annotation must be an object, got invalid string: {parse_err}")
             if isinstance(annotation, dict):
                 if annotation["type"] == "text":
                     annotation = TextAnnotation(**annotation)

@@ -5,6 +5,7 @@
 User and group management tools for CML MCP server.
 """
 
+import json
 import logging
 
 import httpx
@@ -60,9 +61,14 @@ def register_tools(mcp):  # noqa: C901
         try:
             if not await client.is_admin():
                 raise ValueError("Only admin users can create new users.")
-            # XXX The dict usage is a workaround for some LLMs that pass a JSON string
+            # XXX The dict/str handling is a workaround for some LLMs that pass a JSON string
             # representation of the argument object.
-            if isinstance(user, dict):
+            if isinstance(user, str):
+                try:
+                    user = UserCreate(**json.loads(user))
+                except Exception as parse_err:
+                    raise ToolError(f"user must be an object, got invalid string: {parse_err}")
+            elif isinstance(user, dict):
                 user = UserCreate(**user)
             resp = await client.post("/users", data=user.model_dump(mode="json", exclude_defaults=True, exclude_none=True))
             return UUID4Type(resp["id"])
@@ -147,9 +153,14 @@ def register_tools(mcp):  # noqa: C901
         try:
             if not await client.is_admin():
                 raise ValueError("Only admin users can create new groups.")
-            # XXX The dict usage is a workaround for some LLMs that pass a JSON string
+            # XXX The dict/str handling is a workaround for some LLMs that pass a JSON string
             # representation of the argument object.
-            if isinstance(group, dict):
+            if isinstance(group, str):
+                try:
+                    group = GroupCreate(**json.loads(group))
+                except Exception as parse_err:
+                    raise ToolError(f"group must be an object, got invalid string: {parse_err}")
+            elif isinstance(group, dict):
                 group = GroupCreate(**group)
             resp = await client.post("/groups", data=group.model_dump(mode="json", exclude_none=True))
             return UUID4Type(resp["id"])

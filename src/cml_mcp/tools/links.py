@@ -30,18 +30,22 @@ def register_tools(mcp):
     )
     async def connect_two_nodes(
         lid: UUID4Type,
-        link_info: LinkCreate | dict | str,
+        link_info: LinkCreate | dict,
     ) -> UUID4Type:
         """
         Create link between two interfaces. Returns link UUID.
         Required: src_int (source interface UUID), dst_int (destination interface UUID).
         Use interface UUIDs from get_interfaces_for_node.
+        Pass link_info as an object: {"src_int": "<uuid>", "dst_int": "<uuid>"}
         """
         client = get_cml_client_dep()
         try:
             # Workaround for LLMs that pass link_info as a JSON string instead of a dict
             if isinstance(link_info, str):
-                link_info = LinkCreate(**json.loads(link_info))
+                try:
+                    link_info = LinkCreate(**json.loads(link_info))
+                except Exception as parse_err:
+                    raise ToolError(f"link_info must be an object with src_int and dst_int fields, got invalid string: {parse_err}")
             elif isinstance(link_info, dict):
                 link_info = LinkCreate(**link_info)
             resp = await client.post(f"/labs/{lid}/links", data=link_info.model_dump(mode="json"))
@@ -89,9 +93,14 @@ def register_tools(mcp):
         """
         client = get_cml_client_dep()
         try:
-            # XXX The dict usage is a workaround for some LLMs that pass a JSON string
+            # XXX The dict/str handling is a workaround for some LLMs that pass a JSON string
             # representation of the argument object.
-            if isinstance(condition, dict):
+            if isinstance(condition, str):
+                try:
+                    condition = LinkConditionConfiguration(**json.loads(condition))
+                except Exception as parse_err:
+                    raise ToolError(f"condition must be an object, got invalid string: {parse_err}")
+            elif isinstance(condition, dict):
                 condition = LinkConditionConfiguration(**condition)
             await client.patch(f"/labs/{lid}/links/{link_id}/condition", data=condition.model_dump(mode="json", exclude_none=True))
             return True

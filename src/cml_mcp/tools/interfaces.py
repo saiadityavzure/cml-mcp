@@ -5,6 +5,7 @@
 Interface management tools for CML MCP server.
 """
 
+import json
 import logging
 
 import httpx
@@ -55,9 +56,14 @@ def register_tools(mcp):
         """
         client = get_cml_client_dep()
         try:
-            # XXX The dict usage is a workaround for some LLMs that pass a JSON string
+            # XXX The dict/str handling is a workaround for some LLMs that pass a JSON string
             # representation of the argument object.
-            if isinstance(intf, dict):
+            if isinstance(intf, str):
+                try:
+                    intf = InterfaceCreate(**json.loads(intf))
+                except Exception as parse_err:
+                    raise ToolError(f"intf must be an object, got invalid string: {parse_err}")
+            elif isinstance(intf, dict):
                 intf = InterfaceCreate(**intf)
             return await add_interface(lid, intf, client)
         except httpx.HTTPStatusError as e:

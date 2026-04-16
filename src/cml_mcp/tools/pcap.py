@@ -6,6 +6,7 @@ Packet capture (PCAP) tools for CML MCP server.
 """
 
 import base64
+import json
 import logging
 
 import httpx
@@ -35,13 +36,22 @@ def register_tools(mcp):
     @mcp.tool(
         annotations={"title": "Start a Packet Capture on a Link", "readOnlyHint": False, "destructiveHint": False},
     )
-    async def start_packet_capture(lid: UUID4Type, link_id: UUID4Type, pcap: PCAPStart) -> bool:
+    async def start_packet_capture(lid: UUID4Type, link_id: UUID4Type, pcap: PCAPStart | dict) -> bool:
         """
         Start a packet capture by lab and link UUID. At least one of maxtime or maxpackets is
         required in pcap.  Returns true if successful.
         """
         client = get_cml_client_dep()
         try:
+            # XXX The dict/str handling is a workaround for some LLMs that pass a JSON string
+            # representation of the argument object.
+            if isinstance(pcap, str):
+                try:
+                    pcap = PCAPStart(**json.loads(pcap))
+                except Exception as parse_err:
+                    raise ToolError(f"pcap must be an object, got invalid string: {parse_err}")
+            elif isinstance(pcap, dict):
+                pcap = PCAPStart(**pcap)
             await client.put(f"/labs/{lid}/links/{link_id}/capture/start", data=pcap.model_dump(mode="json", exclude_none=True))
             return True
         except httpx.HTTPStatusError as e:

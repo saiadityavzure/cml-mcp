@@ -27,6 +27,7 @@ Lab management tools for CML MCP server.
 """
 
 import asyncio
+import json
 import logging
 
 import httpx
@@ -141,9 +142,14 @@ def register_tools(mcp):  # noqa: C901
         """
         client = get_cml_client_dep()
         try:
-            # XXX The dict usage is a workaround for some LLMs that pass a JSON string
+            # XXX The dict/str handling is a workaround for some LLMs that pass a JSON string
             # representation of the argument object.
-            if isinstance(lab, dict):
+            if isinstance(lab, str):
+                try:
+                    lab = LabRequest(**json.loads(lab))
+                except Exception as parse_err:
+                    raise ToolError(f"lab must be an object, got invalid string: {parse_err}")
+            elif isinstance(lab, dict):
                 lab = LabRequest(**lab)
             resp = await client.post("/labs", data=lab.model_dump(mode="json", exclude_defaults=True, exclude_none=True))
             return UUID4Type(resp["id"])
@@ -168,9 +174,14 @@ def register_tools(mcp):  # noqa: C901
         """
         client = get_cml_client_dep()
         try:
-            # XXX The dict usage is a workaround for some LLMs that pass a JSON string
+            # XXX The dict/str handling is a workaround for some LLMs that pass a JSON string
             # representation of the argument object.
-            if isinstance(lab, dict):
+            if isinstance(lab, str):
+                try:
+                    lab = LabRequest(**json.loads(lab))
+                except Exception as parse_err:
+                    raise ToolError(f"lab must be an object, got invalid string: {parse_err}")
+            elif isinstance(lab, dict):
                 lab = LabRequest(**lab)
             await client.patch(f"/labs/{lid}", data=lab.model_dump(mode="json", exclude_defaults=True, exclude_none=True))
             return True
@@ -196,9 +207,14 @@ def register_tools(mcp):  # noqa: C901
         """
         client = get_cml_client_dep()
         try:
-            # XXX The dict usage is a workaround for some LLMs that pass a JSON string
+            # XXX The dict/str handling is a workaround for some LLMs that pass a JSON string
             # representation of the argument object.
-            if isinstance(topology, dict):
+            if isinstance(topology, str):
+                try:
+                    topology = Topology(**json.loads(topology))
+                except Exception as parse_err:
+                    raise ToolError(f"topology must be an object, got invalid string: {parse_err}")
+            elif isinstance(topology, dict):
                 topology = Topology(**topology)
             return await create_full_topology_from_obj(topology, client)
         except httpx.HTTPStatusError as e:

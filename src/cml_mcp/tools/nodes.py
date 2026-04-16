@@ -6,6 +6,7 @@ Node management tools for CML MCP server.
 """
 
 import asyncio
+import json
 import logging
 
 import httpx
@@ -100,9 +101,14 @@ def register_tools(mcp):  # noqa: C901
         """
         client = get_cml_client_dep()
         try:
-            # XXX The dict usage is a workaround for some LLMs that pass a JSON string
+            # XXX The dict/str handling is a workaround for some LLMs that pass a JSON string
             # representation of the argument object.
-            if isinstance(node, dict):
+            if isinstance(node, str):
+                try:
+                    node = NodeCreate(**json.loads(node))
+                except Exception as parse_err:
+                    raise ToolError(f"node must be an object, got invalid string: {parse_err}")
+            elif isinstance(node, dict):
                 node = NodeCreate(**node)
             resp = await client.post(
                 f"/labs/{lid}/nodes", params={"populate_interfaces": True}, data=node.model_dump(mode="json", exclude_defaults=True)
