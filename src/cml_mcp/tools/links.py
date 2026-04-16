@@ -30,13 +30,13 @@ def register_tools(mcp):
     )
     async def connect_two_nodes(
         lid: UUID4Type,
-        link_info: LinkCreate | dict,
+        link_info: LinkCreate | dict | str,
     ) -> UUID4Type:
         """
         Create link between two interfaces. Returns link UUID.
         Required: src_int (source interface UUID), dst_int (destination interface UUID).
         Use interface UUIDs from get_interfaces_for_node.
-        Pass link_info as an object: {"src_int": "<uuid>", "dst_int": "<uuid>"}
+        link_info must be an object with src_int and dst_int fields.
         """
         client = get_cml_client_dep()
         try:
@@ -82,7 +82,7 @@ def register_tools(mcp):
     async def apply_link_conditioning(
         lid: UUID4Type,
         link_id: UUID4Type,
-        condition: LinkConditionConfiguration | dict,
+        condition: LinkConditionConfiguration | dict | str,
     ) -> bool:
         """
         Configure link network conditions by lab and link UUID.

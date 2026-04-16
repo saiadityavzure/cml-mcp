@@ -91,7 +91,7 @@ def register_tools(mcp):  # noqa: C901
     )
     async def add_node_to_cml_lab(
         lid: UUID4Type,
-        node: NodeCreate | dict,
+        node: NodeCreate | dict | str,
     ) -> UUID4Type:
         """
         Add node to lab. Returns node UUID. Auto-creates default interfaces per node definition.

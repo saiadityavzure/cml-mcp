@@ -78,7 +78,7 @@ def register_tools(mcp):
     )
     async def add_annotation_to_cml_lab(
         lid: UUID4Type,
-        annotation: EllipseAnnotation | LineAnnotation | RectangleAnnotation | TextAnnotation | dict,
+        annotation: EllipseAnnotation | LineAnnotation | RectangleAnnotation | TextAnnotation | dict | str,
     ) -> UUID4Type:
         """
         Add visual annotation to lab. Returns annotation UUID.

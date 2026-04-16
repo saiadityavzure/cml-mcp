@@ -36,7 +36,7 @@ def register_tools(mcp):
     @mcp.tool(
         annotations={"title": "Start a Packet Capture on a Link", "readOnlyHint": False, "destructiveHint": False},
     )
-    async def start_packet_capture(lid: UUID4Type, link_id: UUID4Type, pcap: PCAPStart | dict) -> bool:
+    async def start_packet_capture(lid: UUID4Type, link_id: UUID4Type, pcap: PCAPStart | dict | str) -> bool:
         """
         Start a packet capture by lab and link UUID. At least one of maxtime or maxpackets is
         required in pcap.  Returns true if successful.

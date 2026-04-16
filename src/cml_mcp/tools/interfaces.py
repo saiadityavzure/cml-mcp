@@ -48,7 +48,7 @@ def register_tools(mcp):
     )
     async def add_interface_to_node(
         lid: UUID4Type,
-        intf: InterfaceCreate | dict,
+        intf: InterfaceCreate | dict | str,
     ) -> SimplifiedInterfaceResponse:
         """
         Add interface to node. Returns interface with id, node, slot, type, and MAC address.
