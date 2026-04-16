@@ -26,7 +26,7 @@ from cml_mcp.cml.simple_webserver.schemas.annotations import (
     TextAnnotationResponse,
 )
 from cml_mcp.cml.simple_webserver.schemas.common import UUID4Type
-from cml_mcp.tools.dependencies import get_cml_client_dep
+from cml_mcp.tools.dependencies import get_cml_client_dep, parse_str_arg
 
 logger = logging.getLogger("cml-mcp.tools.annotations")
 
@@ -101,7 +101,7 @@ def register_tools(mcp):
             # representation of the argument object.
             if isinstance(annotation, str):
                 try:
-                    annotation = json.loads(annotation)
+                    annotation = parse_str_arg(annotation)
                 except Exception as parse_err:
                     raise ToolError(f"annotation must be an object, got invalid string: {parse_err}")
             if isinstance(annotation, dict):

@@ -15,7 +15,7 @@ from fastmcp.exceptions import ToolError
 from cml_mcp.cml.simple_webserver.schemas.common import UUID4Type
 from cml_mcp.cml.simple_webserver.schemas.pcap import PCAPItem, PCAPStart, PCAPStatusResponse
 from cml_mcp.cml_client import CMLClient
-from cml_mcp.tools.dependencies import get_cml_client_dep
+from cml_mcp.tools.dependencies import get_cml_client_dep, parse_str_arg
 
 logger = logging.getLogger("cml-mcp.tools.pcap")
 
@@ -47,7 +47,7 @@ def register_tools(mcp):
             # representation of the argument object.
             if isinstance(pcap, str):
                 try:
-                    pcap = PCAPStart(**json.loads(pcap))
+                    pcap = PCAPStart(**parse_str_arg(pcap))
                 except Exception as parse_err:
                     raise ToolError(f"pcap must be an object, got invalid string: {parse_err}")
             elif isinstance(pcap, dict):

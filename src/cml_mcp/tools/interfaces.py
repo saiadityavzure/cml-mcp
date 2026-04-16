@@ -5,7 +5,6 @@
 Interface management tools for CML MCP server.
 """
 
-import json
 import logging
 
 import httpx
@@ -48,28 +47,22 @@ def register_tools(mcp):
     )
     async def add_interface_to_node(
         lid: UUID4Type,
-        intf: InterfaceCreate | dict,
+        nid: UUID4Type,
+        slot: int | None = None,
+        mac_address: str | None = None,
     ) -> SimplifiedInterfaceResponse:
         """
         Add interface to node. Returns interface with id, node, slot, type, and MAC address.
-        Required: node (node UUID). Optional: slot (0-128), mac_address ("00:11:22:33:44:55" format).
+        nid: node UUID. slot: interface slot number 0-128 (optional). mac_address: "00:11:22:33:44:55" format (optional).
         """
         client = get_cml_client_dep()
         try:
-            # XXX The dict/str handling is a workaround for some LLMs that pass a JSON string
-            # representation of the argument object.
-            if isinstance(intf, str):
-                try:
-                    intf = InterfaceCreate(**json.loads(intf))
-                except Exception as parse_err:
-                    raise ToolError(f"intf must be an object, got invalid string: {parse_err}")
-            elif isinstance(intf, dict):
-                intf = InterfaceCreate(**intf)
+            intf = InterfaceCreate(node=nid, slot=slot, mac_address=mac_address)
             return await add_interface(lid, intf, client)
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
-            logger.error(f"Error adding interface to node {intf.node} in lab {lid}: {str(e)}", exc_info=True)
+            logger.error(f"Error adding interface to node {nid} in lab {lid}: {str(e)}", exc_info=True)
             raise ToolError(e)
 
     @mcp.tool(

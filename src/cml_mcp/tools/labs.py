@@ -41,7 +41,7 @@ from cml_mcp.cml.simple_webserver.schemas.common import UserName, UUID4Type
 from cml_mcp.cml.simple_webserver.schemas.labs import Lab, LabRequest, LabTitle
 from cml_mcp.cml.simple_webserver.schemas.topologies import Topology
 from cml_mcp.cml_client import CMLClient
-from cml_mcp.tools.dependencies import get_cml_client_dep
+from cml_mcp.tools.dependencies import get_cml_client_dep, parse_str_arg
 
 logger = logging.getLogger("cml-mcp.tools.labs")
 
@@ -134,7 +134,7 @@ def register_tools(mcp):  # noqa: C901
             "destructiveHint": False,
         },
     )
-    async def create_empty_lab(lab: LabRequest | dict) -> UUID4Type:
+    async def create_empty_lab(lab: LabRequest | dict | str) -> UUID4Type:
         """
         Create empty lab. Returns lab UUID.
         Optional: title (str, 1-64 chars), owner (UUID), description (str, max 4096 chars), notes (str, max 32768 chars),
@@ -146,7 +146,7 @@ def register_tools(mcp):  # noqa: C901
             # representation of the argument object.
             if isinstance(lab, str):
                 try:
-                    lab = LabRequest(**json.loads(lab))
+                    lab = LabRequest(**parse_str_arg(lab))
                 except Exception as parse_err:
                     raise ToolError(f"lab must be an object, got invalid string: {parse_err}")
             elif isinstance(lab, dict):
@@ -167,7 +167,7 @@ def register_tools(mcp):  # noqa: C901
             "idempotentHint": True,
         },
     )
-    async def modify_cml_lab(lid: UUID4Type, lab: LabRequest | dict) -> bool:
+    async def modify_cml_lab(lid: UUID4Type, lab: LabRequest | dict | str) -> bool:
         """
         Update lab metadata by UUID.
         Modifiable: title, owner, description, notes, associations (group/user permissions).
@@ -178,7 +178,7 @@ def register_tools(mcp):  # noqa: C901
             # representation of the argument object.
             if isinstance(lab, str):
                 try:
-                    lab = LabRequest(**json.loads(lab))
+                    lab = LabRequest(**parse_str_arg(lab))
                 except Exception as parse_err:
                     raise ToolError(f"lab must be an object, got invalid string: {parse_err}")
             elif isinstance(lab, dict):
@@ -198,7 +198,7 @@ def register_tools(mcp):  # noqa: C901
             "destructiveHint": False,
         },
     )
-    async def create_full_lab_topology(topology: Topology | dict) -> UUID4Type:
+    async def create_full_lab_topology(topology: Topology | dict | str) -> UUID4Type:
         """
         Create complete lab from Topology. Returns lab UUID.
         Required: lab (title, version), nodes (id, x, y, label, node_definition, interfaces), links (id, i1, i2, n1, n2).
@@ -211,7 +211,7 @@ def register_tools(mcp):  # noqa: C901
             # representation of the argument object.
             if isinstance(topology, str):
                 try:
-                    topology = Topology(**json.loads(topology))
+                    topology = Topology(**parse_str_arg(topology))
                 except Exception as parse_err:
                     raise ToolError(f"topology must be an object, got invalid string: {parse_err}")
             elif isinstance(topology, dict):

@@ -13,7 +13,7 @@ from fastmcp.exceptions import ToolError
 
 from cml_mcp.cml.simple_webserver.schemas.common import UUID4Type
 from cml_mcp.cml.simple_webserver.schemas.links import LinkConditionConfiguration, LinkCreate, LinkResponse
-from cml_mcp.tools.dependencies import get_cml_client_dep
+from cml_mcp.tools.dependencies import get_cml_client_dep, parse_str_arg
 
 logger = logging.getLogger("cml-mcp.tools.links")
 
@@ -44,7 +44,7 @@ def register_tools(mcp):
             if isinstance(link_info, str):
                 logger.debug(f"link_info passed as string (len={len(link_info)}): {link_info!r}")
                 try:
-                    link_info = LinkCreate(**json.loads(link_info))
+                    link_info = LinkCreate(**parse_str_arg(link_info))
                 except Exception as parse_err:
                     raise ToolError(f"link_info must be an object with src_int and dst_int fields, got invalid string: {parse_err}")
             elif isinstance(link_info, dict):
@@ -98,7 +98,7 @@ def register_tools(mcp):
             # representation of the argument object.
             if isinstance(condition, str):
                 try:
-                    condition = LinkConditionConfiguration(**json.loads(condition))
+                    condition = LinkConditionConfiguration(**parse_str_arg(condition))
                 except Exception as parse_err:
                     raise ToolError(f"condition must be an object, got invalid string: {parse_err}")
             elif isinstance(condition, dict):

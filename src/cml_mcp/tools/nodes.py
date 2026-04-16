@@ -18,7 +18,7 @@ from mcp.types import INVALID_REQUEST, METHOD_NOT_FOUND
 from cml_mcp.cml.simple_webserver.schemas.common import UUID4Type
 from cml_mcp.cml.simple_webserver.schemas.nodes import Node, NodeConfigurationContent, NodeCreate
 from cml_mcp.cml_client import CMLClient
-from cml_mcp.tools.dependencies import get_cml_client_dep
+from cml_mcp.tools.dependencies import get_cml_client_dep, parse_str_arg
 
 logger = logging.getLogger("cml-mcp.tools.nodes")
 
@@ -106,7 +106,7 @@ def register_tools(mcp):  # noqa: C901
             if isinstance(node, str):
                 logger.debug(f"node passed as string (len={len(node)}): {node!r}")
                 try:
-                    node = NodeCreate(**json.loads(node))
+                    node = NodeCreate(**parse_str_arg(node))
                 except Exception as parse_err:
                     raise ToolError(f"node must be an object, got invalid string: {parse_err}")
             elif isinstance(node, dict):

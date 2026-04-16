@@ -26,9 +26,11 @@
 Dependency injection module for CML client management.
 """
 
+import ast
 import contextvars
+import json
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from cml_mcp.cml_client import CMLClient
 from cml_mcp.settings import settings
@@ -56,6 +58,26 @@ _request_client: contextvars.ContextVar[Optional[CMLClient]] = contextvars.Conte
 _pyats_username: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("pyats_username", default=None)
 _pyats_password: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("pyats_password", default=None)
 _pyats_auth_pass: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("pyats_auth_pass", default=None)
+
+
+def parse_str_arg(value: str) -> Any:
+    """
+    Parse a string argument that should be a dict/object.
+    Handles both JSON strings (double quotes) and Python dict repr (single quotes).
+    Raises ValueError if the string cannot be parsed as a dict.
+    """
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        pass
+    # Fallback: Python dict repr with single quotes (e.g. {'key': 'val'})
+    try:
+        parsed = ast.literal_eval(value)
+        if isinstance(parsed, dict):
+            return parsed
+        raise ValueError(f"Expected a dict, got {type(parsed).__name__}")
+    except (ValueError, SyntaxError) as e:
+        raise ValueError(f"Cannot parse as object (tried JSON and Python dict repr): {e}") from e
 
 
 async def cleanup_global_client() -> None:

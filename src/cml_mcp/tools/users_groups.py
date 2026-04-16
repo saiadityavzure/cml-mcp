@@ -17,7 +17,7 @@ from mcp.types import INVALID_REQUEST, METHOD_NOT_FOUND
 from cml_mcp.cml.simple_webserver.schemas.common import UUID4Type
 from cml_mcp.cml.simple_webserver.schemas.groups import GroupCreate, GroupResponse
 from cml_mcp.cml.simple_webserver.schemas.users import UserCreate, UserResponse
-from cml_mcp.tools.dependencies import get_cml_client_dep
+from cml_mcp.tools.dependencies import get_cml_client_dep, parse_str_arg
 
 logger = logging.getLogger("cml-mcp.tools.users_groups")
 
@@ -65,7 +65,7 @@ def register_tools(mcp):  # noqa: C901
             # representation of the argument object.
             if isinstance(user, str):
                 try:
-                    user = UserCreate(**json.loads(user))
+                    user = UserCreate(**parse_str_arg(user))
                 except Exception as parse_err:
                     raise ToolError(f"user must be an object, got invalid string: {parse_err}")
             elif isinstance(user, dict):
@@ -157,7 +157,7 @@ def register_tools(mcp):  # noqa: C901
             # representation of the argument object.
             if isinstance(group, str):
                 try:
-                    group = GroupCreate(**json.loads(group))
+                    group = GroupCreate(**parse_str_arg(group))
                 except Exception as parse_err:
                     raise ToolError(f"group must be an object, got invalid string: {parse_err}")
             elif isinstance(group, dict):
