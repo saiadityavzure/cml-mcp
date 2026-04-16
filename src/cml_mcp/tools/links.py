@@ -42,6 +42,7 @@ def register_tools(mcp):
         try:
             # Workaround for LLMs that pass link_info as a JSON string instead of a dict
             if isinstance(link_info, str):
+                logger.debug(f"link_info passed as string (len={len(link_info)}): {link_info!r}")
                 try:
                     link_info = LinkCreate(**json.loads(link_info))
                 except Exception as parse_err:

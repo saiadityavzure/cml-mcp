@@ -104,6 +104,7 @@ def register_tools(mcp):  # noqa: C901
             # XXX The dict/str handling is a workaround for some LLMs that pass a JSON string
             # representation of the argument object.
             if isinstance(node, str):
+                logger.debug(f"node passed as string (len={len(node)}): {node!r}")
                 try:
                     node = NodeCreate(**json.loads(node))
                 except Exception as parse_err:
