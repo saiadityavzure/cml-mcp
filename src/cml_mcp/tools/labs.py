@@ -134,7 +134,7 @@ def register_tools(mcp):  # noqa: C901
             "destructiveHint": False,
         },
     )
-    async def create_empty_lab(lab: LabRequest | dict | str) -> UUID4Type:
+    async def create_empty_lab(lab: LabRequest | dict) -> UUID4Type:
         """
         Create empty lab. Returns lab UUID.
         Optional: title (str, 1-64 chars), owner (UUID), description (str, max 4096 chars), notes (str, max 32768 chars),
@@ -167,7 +167,7 @@ def register_tools(mcp):  # noqa: C901
             "idempotentHint": True,
         },
     )
-    async def modify_cml_lab(lid: UUID4Type, lab: LabRequest | dict | str) -> bool:
+    async def modify_cml_lab(lid: UUID4Type, lab: LabRequest | dict) -> bool:
         """
         Update lab metadata by UUID.
         Modifiable: title, owner, description, notes, associations (group/user permissions).
@@ -198,7 +198,7 @@ def register_tools(mcp):  # noqa: C901
             "destructiveHint": False,
         },
     )
-    async def create_full_lab_topology(topology: Topology | dict | str) -> UUID4Type:
+    async def create_full_lab_topology(topology: Topology | dict) -> UUID4Type:
         """
         Create complete lab from Topology. Returns lab UUID.
         Required: lab (title, version), nodes (id, x, y, label, node_definition, interfaces), links (id, i1, i2, n1, n2).

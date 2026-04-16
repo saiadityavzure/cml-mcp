@@ -83,7 +83,7 @@ def register_tools(mcp):
     async def apply_link_conditioning(
         lid: UUID4Type,
         link_id: UUID4Type,
-        condition: LinkConditionConfiguration | dict | str,
+        condition: LinkConditionConfiguration | dict,
     ) -> bool:
         """
         Configure link network conditions by lab and link UUID.

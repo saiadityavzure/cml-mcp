@@ -52,7 +52,7 @@ def register_tools(mcp):  # noqa: C901
             "destructiveHint": False,
         },
     )
-    async def create_cml_user(user: UserCreate | dict | str) -> UUID4Type:
+    async def create_cml_user(user: UserCreate | dict) -> UUID4Type:
         """
         Create user. Requires admin. Returns user UUID.
         Required: username, password. Optional: fullname, description, email, groups (UUID list), admin (bool), resource_pool (UUID).
@@ -144,7 +144,7 @@ def register_tools(mcp):  # noqa: C901
             "destructiveHint": False,
         },
     )
-    async def create_cml_group(group: GroupCreate | dict | str) -> UUID4Type:
+    async def create_cml_group(group: GroupCreate | dict) -> UUID4Type:
         """
         Create group. Requires admin. Returns group UUID.
         Required: name. Optional: description, members (user UUID list), associations (lab permissions).
