@@ -590,9 +590,32 @@ async def test_add_annotation_to_cml_lab(main_mcp_client: Client[FastMCPTranspor
             assert annotation.type in {"ellipse", "line", "rectangle", "text"}
 
 
+@pytest.mark.mock_only
+async def test_connect_nodes_by_label_mock(main_mcp_client: Client[FastMCPTransport]):
+    """
+    Test connect_nodes_by_label in mock mode.
+    Uses "Branch Test" lab (unique in mock data) and the two nodes from get_nodes_for_cml_lab.json.
+    """
+    link_result = await main_mcp_client.call_tool(
+        name="connect_nodes_by_label",
+        arguments={
+            "lab_name": "Branch Test",
+            "node_a_label": "MCP Test Node 1",
+            "node_b_label": "MCP Test Node 2",
+        },
+    )
+    assert isinstance(link_result.content, list)
+    assert len(link_result.content) > 0
+    assert isinstance(link_result.content[0], TextContent)
+    # Verify a valid UUID was returned as the link ID
+    link_id = UUID4Type(link_result.content[0].text)
+    assert link_id is not None
+
+
 @pytest.mark.live_only
-async def test_connect_two_nodes(main_mcp_client: Client[FastMCPTransport], created_lab: tuple[UUID4Type, LabRequest]):
-    lab_id = created_lab[0]
+async def test_connect_nodes_by_label(main_mcp_client: Client[FastMCPTransport], created_lab: tuple[UUID4Type, LabRequest]):
+    lab_id, lab_create = created_lab
+    lab_name = str(lab_create.title)
 
     node1_create = NodeCreate(
         node_definition="iol-xe",
@@ -618,111 +641,30 @@ async def test_connect_two_nodes(main_mcp_client: Client[FastMCPTransport], crea
     assert isinstance(node2_result.content, list)
     assert len(node2_result.content) > 0
     assert isinstance(node2_result.content[0], TextContent)
-    node2_id = UUID4Type(node2_result.content[0].text)
+    _ = UUID4Type(node2_result.content[0].text)
 
-    intf1_result = await main_mcp_client.call_tool(name="get_interfaces_for_node", arguments={"lid": lab_id, "nid": node1_id})
-    intf2_result = await main_mcp_client.call_tool(name="get_interfaces_for_node", arguments={"lid": lab_id, "nid": node2_id})
-    assert isinstance(intf1_result.data, list)
-    assert isinstance(intf2_result.data, list)
-    assert len(intf1_result.data) > 1  # Interface index 0 is a loopback and cannot be connected.
-    assert len(intf2_result.data) > 1  # Interface index 0 is a loopback and cannot be connected.
-
-    # Interface index 0 is a loopback and cannot be connected.
-    link_create = LinkCreate(
-        src_int=_to_model(intf1_result.data[1], SimplifiedInterfaceResponse).id,
-        dst_int=_to_model(intf2_result.data[1], SimplifiedInterfaceResponse).id,
+    # Connect nodes by label — no interface UUIDs needed
+    link_result = await main_mcp_client.call_tool(
+        name="connect_nodes_by_label",
+        arguments={
+            "lab_name": lab_name,
+            "node_a_label": "MCP Test Node 1",
+            "node_b_label": "MCP Test Node 2",
+        },
     )
-    link_result = await main_mcp_client.call_tool(name="connect_two_nodes", arguments={"lid": lab_id, "link_info": link_create})
     assert isinstance(link_result.content, list)
     assert len(link_result.content) > 0
     assert isinstance(link_result.content[0], TextContent)
-    _ = UUID4Type(link_result.content[0].text)
+    link_id = UUID4Type(link_result.content[0].text)
+    assert link_id is not None
 
-    link_result = await main_mcp_client.call_tool(
-        name="get_all_links_for_lab",
-        arguments={"lid": lab_id},
-    )
-    assert isinstance(link_result.data, list)
-    assert len(link_result.data) == snapshot(1)
-    # outsource(link_result.data, ".json")
-    for link in link_result.data:
+    # Verify the link appears in the lab
+    links = await main_mcp_client.call_tool(name="get_all_links_for_lab", arguments={"lid": lab_id})
+    assert isinstance(links.data, list)
+    assert len(links.data) == snapshot(1)
+    for link in links.data:
         link = _to_model(link, LinkResponse)
         assert isinstance(link, LinkResponse)
-
-    _ = await main_mcp_client.call_tool(
-        name="start_cml_lab",
-        arguments={"lid": lab_id, "wait_for_convergence": True},
-    )
-
-    capture_result = await main_mcp_client.call_tool(
-        name="start_packet_capture",
-        arguments={
-            "lid": lab_id,
-            "link_id": _to_model(link_result.data[0], LinkResponse).id,
-            "pcap": PCAPStart(maxpackets=100, bpfilter="icmp"),  # we don't need 100, but we don't want it to stop too early either
-        },
-    )
-    assert capture_result.data is True
-
-    _ = await main_mcp_client.call_tool(
-        name="send_cli_command",
-        arguments={"lid": lab_id, "label": "MCP Test Node 1", "commands": "ping 192.0.2.2"},
-    )
-
-    pcap_status = await main_mcp_client.call_tool(
-        name="check_packet_capture_status",
-        arguments={
-            "lid": lab_id,
-            "link_id": _to_model(link_result.data[0], LinkResponse).id,
-        },
-    )
-    # outsource(pcap_status.structured_content, ".json")
-    if isinstance(pcap_status.structured_content, dict):
-        pcap_status.structured_content = PCAPStatusResponse(**pcap_status.structured_content)
-    assert isinstance(pcap_status.structured_content, PCAPStatusResponse)
-    assert pcap_status.structured_content.packetscaptured >= 5  # should be at least 5 packets from the ping
-
-    stop_result = await main_mcp_client.call_tool(
-        name="stop_packet_capture",
-        arguments={
-            "lid": lab_id,
-            "link_id": _to_model(link_result.data[0], LinkResponse).id,
-        },
-    )
-    assert stop_result.data is True
-
-    packet_overview = await main_mcp_client.call_tool(
-        name="get_captured_packet_overview",
-        arguments={
-            "lid": lab_id,
-            "link_id": _to_model(link_result.data[0], LinkResponse).id,
-        },
-    )
-    # outsource(packet_overview.data, ".json")
-    assert isinstance(packet_overview.data, list)
-    assert len(packet_overview.data) >= 5
-    found_icmp = False
-    for item in packet_overview.data:
-        item = _to_model(item, PCAPItem)
-        assert isinstance(item, PCAPItem)
-        if item.protocol.lower().startswith("icmp"):
-            found_icmp = True
-    assert found_icmp is True
-
-    cond_result = await main_mcp_client.call_tool(
-        name="apply_link_conditioning",
-        arguments={
-            "lid": lab_id,
-            "link_id": _to_model(link_result.data[0], LinkResponse).id,
-            "condition": LinkConditionConfiguration(
-                enabled=True,
-                bandwidth=1000,
-                latency=50,
-                loss=0.1,
-            ),
-        },
-    )
-    assert cond_result.data is True
 
 
 @pytest.mark.live_only

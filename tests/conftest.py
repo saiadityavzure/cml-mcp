@@ -189,7 +189,7 @@ class MockCMLClient:
             elif endpoint.endswith("/links"):
                 link_id = self._generate_id()
                 self._created_resources["links"][link_id] = data
-                return link_id
+                return {"id": link_id}
             elif endpoint.endswith("/annotations"):
                 annotation_id = self._generate_id()
                 self._created_resources["annotations"][annotation_id] = data
