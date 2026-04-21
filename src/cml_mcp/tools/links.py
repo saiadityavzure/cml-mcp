@@ -5,17 +5,39 @@
 Link management tools for CML MCP server.
 """
 
-import json
 import logging
 
 import httpx
 from fastmcp.exceptions import ToolError
 
 from cml_mcp.cml.simple_webserver.schemas.common import UUID4Type
+from cml_mcp.cml.simple_webserver.schemas.interfaces import InterfaceCreate
 from cml_mcp.cml.simple_webserver.schemas.links import LinkConditionConfiguration, LinkCreate, LinkResponse
+from cml_mcp.cml_client import CMLClient
 from cml_mcp.tools.dependencies import get_cml_client_dep, parse_str_arg
+from cml_mcp.types import SimplifiedInterfaceResponse
 
 logger = logging.getLogger("cml-mcp.tools.links")
+
+
+async def resolve_lab_id(lab_name: str, client: CMLClient) -> UUID4Type:
+    """Resolve a lab title to its UUID. Raises ToolError if not found or ambiguous."""
+    logger.info(f"Resolving lab name '{lab_name}' to UUID")
+    labs = await client.get("/labs", params={"show_all": True})
+    matches = []
+    for lid in labs:
+        lab = await client.get(f"/labs/{lid}")
+        if lab.get("lab_title") == lab_name:
+            matches.append(UUID4Type(lid))
+            logger.debug(f"Lab name match: '{lab_name}' → {lid}")
+    if not matches:
+        logger.error(f"No lab found with name '{lab_name}'")
+        raise ToolError(f"No lab found with name '{lab_name}'.")
+    if len(matches) > 1:
+        logger.error(f"Ambiguous lab name '{lab_name}': found {len(matches)} matches")
+        raise ToolError(f"Multiple labs found with name '{lab_name}'. Lab names must be unique.")
+    logger.info(f"Resolved lab '{lab_name}' → {matches[0]}")
+    return matches[0]
 
 
 def register_tools(mcp):
@@ -23,38 +45,96 @@ def register_tools(mcp):
 
     @mcp.tool(
         annotations={
-            "title": "Connect Two Nodes in a CML Lab",
+            "title": "Connect Two Nodes by Label in a CML Lab",
             "readOnlyHint": False,
             "destructiveHint": False,
         },
     )
-    async def connect_two_nodes(
-        lid: UUID4Type,
-        link_info: LinkCreate | dict | str,
+    async def connect_nodes_by_label(
+        lab_name: str,
+        node_a_label: str,
+        node_b_label: str,
     ) -> UUID4Type:
         """
-        Create link between two interfaces. Returns link UUID.
-        Required: src_int (source interface UUID), dst_int (destination interface UUID).
-        Use interface UUIDs from get_interfaces_for_node.
-        link_info must be an object with src_int and dst_int fields.
+        Connect two nodes by their labels (names) within a lab identified by name. Returns link UUID.
+        Resolves lab name and node labels to UUIDs, finds the first free (unconnected) interface on
+        each node, creates a new interface slot if none are free, then creates the link.
+        Raises an error if the lab name or either node label is not found or is ambiguous.
         """
         client = get_cml_client_dep()
+        logger.info(f"Connecting nodes '{node_a_label}' and '{node_b_label}' in lab '{lab_name}'")
         try:
-            # Workaround for LLMs that pass link_info as a JSON string instead of a dict
-            if isinstance(link_info, str):
-                logger.debug(f"link_info passed as string (len={len(link_info)}): {link_info!r}")
-                try:
-                    link_info = LinkCreate(**parse_str_arg(link_info))
-                except Exception as parse_err:
-                    raise ToolError(f"link_info must be an object with src_int and dst_int fields, got invalid string: {parse_err}")
-            elif isinstance(link_info, dict):
-                link_info = LinkCreate(**link_info)
-            resp = await client.post(f"/labs/{lid}/links", data=link_info.model_dump(mode="json"))
-            return UUID4Type(resp["id"])
+            # Step 1: Resolve lab name to UUID
+            lid = await resolve_lab_id(lab_name, client)
+
+            # Step 2: Fetch all nodes and resolve both labels to unique node UUIDs
+            logger.info(f"Fetching nodes for lab {lid}")
+            nodes_resp = await client.get(
+                f"/labs/{lid}/nodes",
+                params={"data": True, "operational": False, "exclude_configurations": True},
+            )
+            nodes = list(nodes_resp)
+            logger.debug(f"Found {len(nodes)} node(s) in lab '{lab_name}'")
+
+            def find_node_id(label: str) -> UUID4Type:
+                matches = [n for n in nodes if n.get("label") == label]
+                if not matches:
+                    logger.error(f"No node with label '{label}' found in lab '{lab_name}'")
+                    raise ToolError(f"No node found with label '{label}' in lab '{lab_name}'.")
+                if len(matches) > 1:
+                    logger.error(f"Ambiguous node label '{label}' in lab '{lab_name}': {len(matches)} matches")
+                    raise ToolError(f"Multiple nodes found with label '{label}' in lab '{lab_name}'. Labels must be unique.")
+                nid = UUID4Type(matches[0]["id"])
+                logger.debug(f"Resolved node label '{label}' → {nid}")
+                return nid
+
+            nid_a = find_node_id(node_a_label)
+            nid_b = find_node_id(node_b_label)
+            logger.info(f"Resolved nodes: '{node_a_label}' → {nid_a}, '{node_b_label}' → {nid_b}")
+
+            # Step 3: Get interfaces for each node and find the first free one.
+            # If no free interface exists, add a new slot (CML auto-assigns the next slot).
+            async def get_free_interface(nid: UUID4Type, node_label: str) -> UUID4Type:
+                logger.info(f"Fetching interfaces for node '{node_label}' ({nid})")
+                ifaces_resp = await client.get(
+                    f"/labs/{lid}/nodes/{nid}/interfaces",
+                    params={"data": True, "operational": False},
+                )
+                ifaces = [SimplifiedInterfaceResponse(**iface) for iface in ifaces_resp]
+                logger.debug(f"Node '{node_label}' ({nid}): {len(ifaces)} interface(s) total")
+                free = [iface for iface in ifaces if not iface.is_connected]
+                logger.debug(f"Node '{node_label}' ({nid}): {len(free)} free interface(s)")
+                if free:
+                    chosen = free[0]
+                    logger.info(f"Node '{node_label}' ({nid}): selected free interface '{chosen.label}' ({chosen.id})")
+                    return chosen.id
+                # No free interface — add a new one (slot=None lets CML pick the next slot)
+                logger.info(f"Node '{node_label}' ({nid}): no free interfaces, creating a new slot")
+                new_iface_resp = await client.post(
+                    f"/labs/{lid}/interfaces",
+                    data=InterfaceCreate(node=nid).model_dump(mode="json", exclude_none=True),
+                )
+                new_iface = SimplifiedInterfaceResponse(**new_iface_resp)
+                logger.info(f"Node '{node_label}' ({nid}): created new interface '{new_iface.label}' ({new_iface.id})")
+                return new_iface.id
+
+            src_int = await get_free_interface(nid_a, node_a_label)
+            dst_int = await get_free_interface(nid_b, node_b_label)
+
+            # Step 4: Create the link between the two free interfaces
+            logger.info(f"Creating link between interface {src_int} ('{node_a_label}') and {dst_int} ('{node_b_label}')")
+            link_data = LinkCreate(src_int=src_int, dst_int=dst_int)
+            resp = await client.post(f"/labs/{lid}/links", data=link_data.model_dump(mode="json"))
+            link_id = UUID4Type(resp["id"])
+            logger.info(f"Link {link_id} created between '{node_a_label}' and '{node_b_label}' in lab '{lab_name}'")
+            return link_id
+
+        except ToolError:
+            raise
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
-            logger.error(f"Error creating link for {link_info}: {str(e)}", exc_info=True)
+            logger.error(f"Error connecting '{node_a_label}' to '{node_b_label}' in lab '{lab_name}': {str(e)}", exc_info=True)
             raise ToolError(e)
 
     @mcp.tool(
@@ -68,9 +148,12 @@ def register_tools(mcp):
         Get lab links by UUID. Returns list with id, label, interface_a, interface_b, node_a, node_b, state, and capture_key.
         """
         client = get_cml_client_dep()
+        logger.info(f"Fetching all links for lab {lid}")
         try:
             resp = await client.get(f"/labs/{lid}/links", params={"data": True})
-            return [LinkResponse(**link).model_dump(exclude_unset=True) for link in resp]
+            links = [LinkResponse(**link).model_dump(exclude_unset=True) for link in resp]
+            logger.info(f"Retrieved {len(links)} link(s) for lab {lid}")
+            return links
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
@@ -93,6 +176,7 @@ def register_tools(mcp):
         delay_corr/loss_corr/duplicate_corr/reorder_corr/corrupt_corr (%, 0-100), enabled (bool).
         """
         client = get_cml_client_dep()
+        logger.info(f"Applying link conditioning to link {link_id} in lab {lid}")
         try:
             # XXX The dict/str handling is a workaround for some LLMs that pass a JSON string
             # representation of the argument object.
@@ -103,7 +187,9 @@ def register_tools(mcp):
                     raise ToolError(f"condition must be an object, got invalid string: {parse_err}")
             elif isinstance(condition, dict):
                 condition = LinkConditionConfiguration(**condition)
+            logger.debug(f"Link conditioning payload for {link_id}: {condition.model_dump(exclude_none=True)}")
             await client.patch(f"/labs/{lid}/links/{link_id}/condition", data=condition.model_dump(mode="json", exclude_none=True))
+            logger.info(f"Link conditioning applied to link {link_id} in lab {lid}")
             return True
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
@@ -124,8 +210,10 @@ def register_tools(mcp):
         Start link by lab and link UUID. Enables connectivity.
         """
         client = get_cml_client_dep()
+        logger.info(f"Starting link {link_id} in lab {lid}")
         try:
             await client.put(f"/labs/{lid}/links/{link_id}/state/start")
+            logger.info(f"Link {link_id} started in lab {lid}")
             return True
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
@@ -146,8 +234,10 @@ def register_tools(mcp):
         Stop link by lab and link UUID. Disables connectivity.
         """
         client = get_cml_client_dep()
+        logger.info(f"Stopping link {link_id} in lab {lid}")
         try:
             await client.put(f"/labs/{lid}/links/{link_id}/state/stop")
+            logger.info(f"Link {link_id} stopped in lab {lid}")
             return True
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
