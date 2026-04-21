@@ -88,6 +88,7 @@ class SimplifiedInterfaceBase(BaseModel, extra="ignore"):
 
     label: str = Field(default=None)
     is_connected: bool = Field(default=None, description="Whether this interface is connected (in-use).")
+    type: str | None = Field(default=None, description="Interface type: 'physical' or 'loopback'.")
 
 
 class SimplifiedInterfaceResponse(SimplifiedInterfaceBase, extra="ignore"):

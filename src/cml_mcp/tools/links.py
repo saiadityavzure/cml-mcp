@@ -102,14 +102,29 @@ def register_tools(mcp):
                 )
                 ifaces = [SimplifiedInterfaceResponse(**iface) for iface in ifaces_resp]
                 logger.debug(f"Node '{node_label}' ({nid}): {len(ifaces)} interface(s) total")
-                free = [iface for iface in ifaces if not iface.is_connected]
-                logger.debug(f"Node '{node_label}' ({nid}): {len(free)} free interface(s)")
+
+                # Skip loopbacks (cannot form links) and management interfaces (not for data traffic)
+                def _is_connectable(iface: SimplifiedInterfaceResponse) -> bool:
+                    if iface.type == "loopback":
+                        return False
+                    if iface.label and iface.label.lower().startswith(("mgmt", "management")):
+                        return False
+                    return True
+
+                connectable = [iface for iface in ifaces if _is_connectable(iface)]
+                skipped = len(ifaces) - len(connectable)
+                if skipped:
+                    skipped_labels = [i.label for i in ifaces if not _is_connectable(i)]
+                    logger.debug(f"Node '{node_label}' ({nid}): skipped {skipped} non-connectable interface(s): {skipped_labels}")
+
+                free = [iface for iface in connectable if not iface.is_connected]
+                logger.debug(f"Node '{node_label}' ({nid}): {len(free)} free connectable interface(s)")
                 if free:
                     chosen = free[0]
                     logger.info(f"Node '{node_label}' ({nid}): selected free interface '{chosen.label}' ({chosen.id})")
                     return chosen.id
-                # No free interface — add a new one (slot=None lets CML pick the next slot)
-                logger.info(f"Node '{node_label}' ({nid}): no free interfaces, creating a new slot")
+                # No free connectable interface — add a new one (slot=None lets CML pick the next slot)
+                logger.info(f"Node '{node_label}' ({nid}): no free connectable interfaces, creating a new slot")
                 new_iface_resp = await client.post(
                     f"/labs/{lid}/interfaces",
                     data=InterfaceCreate(node=nid).model_dump(mode="json", exclude_none=True),
