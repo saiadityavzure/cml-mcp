@@ -13,31 +13,10 @@ from fastmcp.exceptions import ToolError
 from cml_mcp.cml.simple_webserver.schemas.common import UUID4Type
 from cml_mcp.cml.simple_webserver.schemas.interfaces import InterfaceCreate
 from cml_mcp.cml.simple_webserver.schemas.links import LinkConditionConfiguration, LinkCreate, LinkResponse
-from cml_mcp.cml_client import CMLClient
-from cml_mcp.tools.dependencies import get_cml_client_dep, parse_str_arg
+from cml_mcp.tools.dependencies import get_cml_client_dep, parse_str_arg, resolve_lab_id
 from cml_mcp.types import SimplifiedInterfaceResponse
 
 logger = logging.getLogger("cml-mcp.tools.links")
-
-
-async def resolve_lab_id(lab_name: str, client: CMLClient) -> UUID4Type:
-    """Resolve a lab title to its UUID. Raises ToolError if not found or ambiguous."""
-    logger.info(f"Resolving lab name '{lab_name}' to UUID")
-    labs = await client.get("/labs", params={"show_all": True})
-    matches = []
-    for lid in labs:
-        lab = await client.get(f"/labs/{lid}")
-        if lab.get("lab_title") == lab_name:
-            matches.append(UUID4Type(lid))
-            logger.debug(f"Lab name match: '{lab_name}' → {lid}")
-    if not matches:
-        logger.error(f"No lab found with name '{lab_name}'")
-        raise ToolError(f"No lab found with name '{lab_name}'.")
-    if len(matches) > 1:
-        logger.error(f"Ambiguous lab name '{lab_name}': found {len(matches)} matches")
-        raise ToolError(f"Multiple labs found with name '{lab_name}'. Lab names must be unique.")
-    logger.info(f"Resolved lab '{lab_name}' → {matches[0]}")
-    return matches[0]
 
 
 def register_tools(mcp):

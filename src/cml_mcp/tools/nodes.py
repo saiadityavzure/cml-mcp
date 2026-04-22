@@ -18,7 +18,7 @@ from mcp.types import INVALID_REQUEST, METHOD_NOT_FOUND
 from cml_mcp.cml.simple_webserver.schemas.common import UUID4Type
 from cml_mcp.cml.simple_webserver.schemas.nodes import Node, NodeConfigurationContent, NodeCreate
 from cml_mcp.cml_client import CMLClient
-from cml_mcp.tools.dependencies import get_cml_client_dep, parse_str_arg
+from cml_mcp.tools.dependencies import get_cml_client_dep, parse_str_arg, resolve_lab_id, resolve_node_id
 
 logger = logging.getLogger("cml-mcp.tools.nodes")
 
@@ -56,12 +56,14 @@ def register_tools(mcp):  # noqa: C901
             "readOnlyHint": True,
         },
     )
-    async def get_nodes_for_cml_lab(lid: UUID4Type) -> list[Node]:
+    async def get_nodes_for_cml_lab(lab_name: str) -> list[Node]:
         """
-        Get lab nodes by UUID. Returns list with id, label, node_definition, x, y, state, interfaces, and operational data (CPU/RAM/serial).
+        Get lab nodes by lab name. Returns list with id, label, node_definition, x, y, state, interfaces, and operational data (CPU/RAM/serial).
+        Resolves the lab name to its UUID automatically.
         """
         client = get_cml_client_dep()
         try:
+            lid = await resolve_lab_id(lab_name, client)
             resp = await client.get(f"/labs/{lid}/nodes", params={"data": True, "operational": True, "exclude_configurations": True})
             rnodes = []
             for node in list(resp):
@@ -79,7 +81,7 @@ def register_tools(mcp):  # noqa: C901
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
-            logger.error(f"Error getting nodes for CML lab {lid}: {str(e)}", exc_info=True)
+            logger.error(f"Error getting nodes for CML lab '{lab_name}': {str(e)}", exc_info=True)
             raise ToolError(e)
 
     @mcp.tool(
@@ -90,17 +92,18 @@ def register_tools(mcp):  # noqa: C901
         },
     )
     async def add_node_to_cml_lab(
-        lid: UUID4Type,
+        lab_name: str,
         node: NodeCreate | dict | str,
     ) -> UUID4Type:
         """
-        Add node to lab. Returns node UUID. Auto-creates default interfaces per node definition.
+        Add node to lab by lab name. Returns node UUID. Auto-creates default interfaces per node definition.
         Required: x (-15000 to 15000), y (-15000 to 15000), label (1-128 chars), node_definition (e.g., "alpine", "iosv").
         node_definition values come from get_cml_node_definitions.
         Optional: image_definition, ram (MB), cpus, cpu_limit (%), data_volume (GB), boot_disk_size (GB), tags, configuration, parameters.
         """
         client = get_cml_client_dep()
         try:
+            lid = await resolve_lab_id(lab_name, client)
             # XXX The dict/str handling is a workaround for some LLMs that pass a JSON string
             # representation of the argument object.
             if isinstance(node, str):
@@ -115,10 +118,12 @@ def register_tools(mcp):  # noqa: C901
                 f"/labs/{lid}/nodes", params={"populate_interfaces": True}, data=node.model_dump(mode="json", exclude_defaults=True)
             )
             return UUID4Type(resp["id"])
+        except ToolError:
+            raise
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
-            logger.error(f"Error adding CML node to lab {lid}: {str(e)}", exc_info=True)
+            logger.error(f"Error adding CML node to lab '{lab_name}': {str(e)}", exc_info=True)
             raise ToolError(e)
 
     @mcp.tool(
@@ -147,18 +152,22 @@ def register_tools(mcp):  # noqa: C901
     @mcp.tool(
         annotations={"title": "Stop a CML Node", "readOnlyHint": False, "destructiveHint": False, "idempotentHint": True},
     )
-    async def stop_cml_node(lid: UUID4Type, nid: UUID4Type) -> bool:
+    async def stop_cml_node(lab_name: str, node_label: str) -> bool:
         """
-        Stop node by lab and node UUID. Powers down the node.
+        Stop node by lab name and node label. Powers down the node.
         """
         client = get_cml_client_dep()
         try:
+            lid = await resolve_lab_id(lab_name, client)
+            nid = await resolve_node_id(lid, node_label, lab_name, client)
             await stop_node(lid, nid, client)
             return True
+        except ToolError:
+            raise
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
-            logger.error(f"Error stopping CML node {nid} in lab {lid}: {str(e)}", exc_info=True)
+            logger.error(f"Error stopping CML node '{node_label}' in lab '{lab_name}': {str(e)}", exc_info=True)
             raise ToolError(e)
 
     @mcp.tool(
@@ -170,15 +179,17 @@ def register_tools(mcp):  # noqa: C901
         },
     )
     async def start_cml_node(
-        lid: UUID4Type,
-        nid: UUID4Type,
+        lab_name: str,
+        node_label: str,
         wait_for_convergence: bool = False,
     ) -> bool:
         """
-        Start node by lab and node UUID. Set wait_for_convergence=true to wait until node reaches stable state.
+        Start node by lab name and node label. Set wait_for_convergence=true to wait until node reaches stable state.
         """
         client = get_cml_client_dep()
         try:
+            lid = await resolve_lab_id(lab_name, client)
+            nid = await resolve_node_id(lid, node_label, lab_name, client)
             await client.put(f"/labs/{lid}/nodes/{nid}/state/start")
             if wait_for_convergence:
                 while True:
@@ -187,22 +198,26 @@ def register_tools(mcp):  # noqa: C901
                         break
                     await asyncio.sleep(3)
             return True
+        except ToolError:
+            raise
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
-            logger.error(f"Error starting CML node {nid} in lab {lid}: {str(e)}", exc_info=True)
+            logger.error(f"Error starting CML node '{node_label}' in lab '{lab_name}': {str(e)}", exc_info=True)
             raise ToolError(e)
 
     @mcp.tool(
         annotations={"title": "Wipe a CML Node", "readOnlyHint": False, "destructiveHint": True, "idempotentHint": True},
     )
-    async def wipe_cml_node(lid: UUID4Type, nid: UUID4Type, ctx: Context) -> bool:
+    async def wipe_cml_node(lab_name: str, node_label: str, ctx: Context) -> bool:
         """
-        Wipe node by lab and node UUID. Erases all node data. Node must be stopped first. CRITICAL: Always ask "Confirm wipe of [item]?"
+        Wipe node by lab name and node label. Erases all node data. Node must be stopped first. CRITICAL: Always ask "Confirm wipe of [item]?"
         and wait for user's "yes" before wiping.
         """
         client = get_cml_client_dep()
         try:
+            lid = await resolve_lab_id(lab_name, client)
+            nid = await resolve_node_id(lid, node_label, lab_name, client)
             elicit_supported = True
             try:
                 result = await ctx.elicit("Are you sure you want to wipe the node?", response_type=None)
@@ -220,22 +235,26 @@ def register_tools(mcp):  # noqa: C901
                 raise Exception("Wipe operation cancelled by user.")
             await wipe_node(lid, nid, client)
             return True
+        except ToolError:
+            raise
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
-            logger.error(f"Error wiping CML node {nid} in lab {lid}: {str(e)}", exc_info=True)
+            logger.error(f"Error wiping CML node '{node_label}' in lab '{lab_name}': {str(e)}", exc_info=True)
             raise ToolError(e)
 
     @mcp.tool(
         annotations={"title": "Delete a node from a CML lab.", "readOnlyHint": False, "destructiveHint": True},
     )
-    async def delete_cml_node(lid: UUID4Type, nid: UUID4Type, ctx: Context) -> bool:
+    async def delete_cml_node(lab_name: str, node_label: str, ctx: Context) -> bool:
         """
-        Delete node by lab and node UUID. Auto-stops and wipes if needed. CRITICAL: Always ask "Confirm deletion of [item]?" and wait for
+        Delete node by lab name and node label. Auto-stops and wipes if needed. CRITICAL: Always ask "Confirm deletion of [item]?" and wait for
         user's "yes" before deleting.
         """
         client = get_cml_client_dep()
         try:
+            lid = await resolve_lab_id(lab_name, client)
+            nid = await resolve_node_id(lid, node_label, lab_name, client)
             elicit_supported = True
             try:
                 result = await ctx.elicit("Are you sure you want to delete the node?", response_type=None)
@@ -255,8 +274,10 @@ def register_tools(mcp):  # noqa: C901
             await wipe_node(lid, nid, client)
             await client.delete(f"/labs/{lid}/nodes/{nid}")
             return True
+        except ToolError:
+            raise
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
-            logger.error(f"Error deleting CML node {nid} in lab {lid}: {str(e)}", exc_info=True)
+            logger.error(f"Error deleting CML node '{node_label}' in lab '{lab_name}': {str(e)}", exc_info=True)
             raise ToolError(e)

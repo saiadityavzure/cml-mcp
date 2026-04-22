@@ -32,6 +32,9 @@ import json
 import logging
 from typing import Any, Optional
 
+from fastmcp.exceptions import ToolError
+
+from cml_mcp.cml.simple_webserver.schemas.common import UUID4Type
 from cml_mcp.cml_client import CMLClient
 from cml_mcp.settings import settings
 
@@ -91,6 +94,42 @@ async def cleanup_global_client() -> None:
             logger.error(f"Error closing global CML client: {e}", exc_info=True)
     else:
         logger.debug("No global CML client to clean up (HTTP mode or client is None)")
+
+
+async def resolve_node_id(lid: UUID4Type, node_label: str, lab_name: str, client: CMLClient) -> UUID4Type:
+    """Resolve a node label to its UUID within a lab. Raises ToolError if not found or ambiguous."""
+    logger.info(f"Resolving node label '{node_label}' in lab '{lab_name}' ({lid})")
+    nodes = await client.get(f"/labs/{lid}/nodes", params={"data": True, "operational": False, "exclude_configurations": True})
+    matches = [n for n in list(nodes) if n.get("label") == node_label]
+    if not matches:
+        logger.error(f"No node with label '{node_label}' found in lab '{lab_name}'")
+        raise ToolError(f"No node found with label '{node_label}' in lab '{lab_name}'.")
+    if len(matches) > 1:
+        logger.error(f"Ambiguous node label '{node_label}' in lab '{lab_name}': {len(matches)} matches")
+        raise ToolError(f"Multiple nodes found with label '{node_label}' in lab '{lab_name}'. Labels must be unique.")
+    nid = UUID4Type(matches[0]["id"])
+    logger.info(f"Resolved node '{node_label}' → {nid}")
+    return nid
+
+
+async def resolve_lab_id(lab_name: str, client: CMLClient) -> UUID4Type:
+    """Resolve a lab title to its UUID. Raises ToolError if not found or ambiguous."""
+    logger.info(f"Resolving lab name '{lab_name}' to UUID")
+    labs = await client.get("/labs", params={"show_all": True})
+    matches = []
+    for lid in labs:
+        lab = await client.get(f"/labs/{lid}")
+        if lab.get("lab_title") == lab_name:
+            matches.append(UUID4Type(lid))
+            logger.debug(f"Lab name match: '{lab_name}' → {lid}")
+    if not matches:
+        logger.error(f"No lab found with name '{lab_name}'")
+        raise ToolError(f"No lab found with name '{lab_name}'.")
+    if len(matches) > 1:
+        logger.error(f"Ambiguous lab name '{lab_name}': found {len(matches)} matches")
+        raise ToolError(f"Multiple labs found with name '{lab_name}'. Lab names must be unique.")
+    logger.info(f"Resolved lab '{lab_name}' → {matches[0]}")
+    return matches[0]
 
 
 def get_cml_client_dep() -> CMLClient:
