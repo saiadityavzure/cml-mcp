@@ -41,7 +41,7 @@ from cml_mcp.cml.simple_webserver.schemas.common import UserName, UUID4Type
 from cml_mcp.cml.simple_webserver.schemas.labs import Lab, LabRequest, LabTitle
 from cml_mcp.cml.simple_webserver.schemas.topologies import Topology
 from cml_mcp.cml_client import CMLClient
-from cml_mcp.tools.dependencies import get_cml_client_dep, parse_str_arg
+from cml_mcp.tools.dependencies import get_cml_client_dep, parse_str_arg, resolve_lab_id, run_with_heartbeat
 
 logger = logging.getLogger("cml-mcp.tools.labs")
 
@@ -227,26 +227,36 @@ def register_tools(mcp):  # noqa: C901
         annotations={"title": "Start a CML Lab", "readOnlyHint": False, "destructiveHint": False, "idempotentHint": True},
     )
     async def start_cml_lab(
-        lid: UUID4Type,
+        lab_name: str,
+        ctx: Context,
         wait_for_convergence: bool = False,
     ) -> bool:
         """
-        Start lab by UUID. Set wait_for_convergence=true to wait until all nodes reach stable state.
+        Start lab by name. Set wait_for_convergence=true to wait until all nodes reach stable state.
         """
         client = get_cml_client_dep()
         try:
-            await client.put(f"/labs/{lid}/start")
+            lid = await resolve_lab_id(lab_name, client)
+            await run_with_heartbeat(client.put(f"/labs/{lid}/start"), ctx, f"Starting lab '{lab_name}'...")
             if wait_for_convergence:
+                elapsed = 0
                 while True:
                     converged = await client.get(f"/labs/{lid}/check_if_converged")
                     if converged:
                         break
+                    try:
+                        await ctx.report_progress(elapsed, None, f"Waiting for '{lab_name}' to converge...")
+                    except Exception:
+                        pass
                     await asyncio.sleep(3)
+                    elapsed += 3
             return True
+        except ToolError:
+            raise
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
-            logger.error(f"Error starting CML lab {lid}: {str(e)}", exc_info=True)
+            logger.error(f"Error starting CML lab '{lab_name}': {str(e)}", exc_info=True)
             raise ToolError(e)
 
     async def stop_lab(lid: UUID4Type, client: CMLClient) -> None:
@@ -272,18 +282,21 @@ def register_tools(mcp):  # noqa: C901
     @mcp.tool(
         annotations={"title": "Stop a CML Lab", "readOnlyHint": False, "destructiveHint": False, "idempotentHint": True},
     )
-    async def stop_cml_lab(lid: UUID4Type) -> bool:
+    async def stop_cml_lab(lab_name: str, ctx: Context) -> bool:
         """
-        Stop lab by UUID. Stops all running nodes.
+        Stop lab by name. Stops all running nodes.
         """
         client = get_cml_client_dep()
         try:
-            await stop_lab(lid, client)
+            lid = await resolve_lab_id(lab_name, client)
+            await run_with_heartbeat(stop_lab(lid, client), ctx, f"Stopping lab '{lab_name}'...")
             return True
+        except ToolError:
+            raise
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
-            logger.error(f"Error stopping CML lab {lid}: {str(e)}", exc_info=True)
+            logger.error(f"Error stopping CML lab '{lab_name}': {str(e)}", exc_info=True)
             raise ToolError(e)
 
     @mcp.tool(
@@ -294,9 +307,9 @@ def register_tools(mcp):  # noqa: C901
             "idempotentHint": True,
         },
     )
-    async def wipe_cml_lab(lid: UUID4Type, ctx: Context) -> bool:
+    async def wipe_cml_lab(lab_name: str, ctx: Context) -> bool:
         """
-        Wipe lab by UUID. Erases all node data/configurations. CRITICAL: Always ask "Confirm wipe of [item]?" and wait for user's "yes"
+        Wipe lab by name. Erases all node data/configurations. CRITICAL: Always ask "Confirm wipe of [item]?" and wait for user's "yes"
         before wiping.
         """
         client = get_cml_client_dep()
@@ -310,18 +323,19 @@ def register_tools(mcp):  # noqa: C901
                 else:
                     raise me
             except Exception as e:
-                # Handle stream closure errors (common in stateless HTTP when client disconnects)
-                # Treat as if elicit is not supported and proceed without confirmation
                 logger.debug(f"elicit() failed (possibly client disconnect): {type(e).__name__}: {e}")
                 elicit_supported = False
             if elicit_supported and result.action != "accept":
                 raise Exception("Wipe operation cancelled by user.")
-            await wipe_lab(lid, client)
+            lid = await resolve_lab_id(lab_name, client)
+            await run_with_heartbeat(wipe_lab(lid, client), ctx, f"Wiping lab '{lab_name}'...")
             return True
+        except ToolError:
+            raise
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
-            logger.error(f"Error wiping CML lab {lid}: {str(e)}", exc_info=True)
+            logger.error(f"Error wiping CML lab '{lab_name}': {str(e)}", exc_info=True)
             raise ToolError(e)
 
     @mcp.tool(
@@ -331,9 +345,9 @@ def register_tools(mcp):  # noqa: C901
             "destructiveHint": True,
         },
     )
-    async def delete_cml_lab(lid: UUID4Type, ctx: Context) -> bool:
+    async def delete_cml_lab(lab_name: str, ctx: Context) -> bool:
         """
-        Delete lab by UUID. Auto-stops and wipes if needed. CRITICAL: Always ask "Confirm deletion of [item]?" and wait for user's "yes"
+        Delete lab by name. Auto-stops and wipes if needed. CRITICAL: Always ask "Confirm deletion of [item]?" and wait for user's "yes"
         before deleting.
         """
         client = get_cml_client_dep()
@@ -347,20 +361,21 @@ def register_tools(mcp):  # noqa: C901
                 else:
                     raise me
             except Exception as e:
-                # Handle stream closure errors (common in stateless HTTP when client disconnects)
-                # Treat as if elicit is not supported and proceed without confirmation
                 logger.debug(f"elicit() failed (possibly client disconnect): {type(e).__name__}: {e}")
                 elicit_supported = False
             if elicit_supported and result.action != "accept":
                 raise Exception("Delete operation cancelled by user.")
-            await stop_lab(lid, client)  # Ensure the lab is stopped before deletion
-            await wipe_lab(lid, client)  # Ensure the lab is wiped before deletion
+            lid = await resolve_lab_id(lab_name, client)
+            await run_with_heartbeat(stop_lab(lid, client), ctx, f"Stopping lab '{lab_name}' before deletion...")
+            await run_with_heartbeat(wipe_lab(lid, client), ctx, f"Wiping lab '{lab_name}'...")
             await client.delete(f"/labs/{lid}")
             return True
+        except ToolError:
+            raise
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
-            logger.error(f"Error deleting CML lab {lid}: {str(e)}", exc_info=True)
+            logger.error(f"Error deleting CML lab '{lab_name}': {str(e)}", exc_info=True)
             raise ToolError(e)
 
     @mcp.tool(
@@ -387,41 +402,46 @@ def register_tools(mcp):  # noqa: C901
     @mcp.tool(
         annotations={"title": "Download lab topology", "readOnlyHint": True},
     )
-    async def download_lab_topology(lid: UUID4Type) -> str:
+    async def download_lab_topology(lab_name: str) -> str:
         """
-        Download lab topology by UUID. Returns the topology as a YAML string.
+        Download lab topology by name. Returns the topology as a YAML string.
         This string should be presented to the user as a YAML file for saving.
         """
         client = get_cml_client_dep()
         try:
+            lid = await resolve_lab_id(lab_name, client)
             return await download_lab_file(lid, client)
+        except ToolError:
+            raise
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
-            logger.error(f"Error downloading lab topology for lab {lid}: {str(e)}", exc_info=True)
+            logger.error(f"Error downloading lab topology for lab '{lab_name}': {str(e)}", exc_info=True)
             raise ToolError(e)
 
     @mcp.tool(
         annotations={"title": "Clone CML Lab", "readOnlyHint": False, "destructiveHint": False},
     )
-    async def clone_cml_lab(lid: UUID4Type, new_title: LabTitle | None = None) -> UUID4Type:
+    async def clone_cml_lab(lab_name: str, new_title: LabTitle | None = None) -> UUID4Type:
         """
-        Clone lab by UUID. Returns UUID of the new lab.
+        Clone lab by name. Returns UUID of the new lab.
         Optional new_title; if omitted, the clone is titled "Copy of " followed by the original title.
         """
         client = get_cml_client_dep()
         try:
+            lid = await resolve_lab_id(lab_name, client)
             topo_file = await download_lab_file(lid, client)
             yaml_data = yaml.safe_load(topo_file)
             if new_title:
                 yaml_data["lab"]["title"] = str(new_title)
             else:
                 yaml_data["lab"]["title"] = f"Copy of {yaml_data['lab']['title']}"
-
             topology = Topology(**yaml_data)
             return await create_full_topology_from_obj(topology, client)
+        except ToolError:
+            raise
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
-            logger.error(f"Error cloning CML lab {lid}: {str(e)}", exc_info=True)
+            logger.error(f"Error cloning CML lab '{lab_name}': {str(e)}", exc_info=True)
             raise ToolError(e)
