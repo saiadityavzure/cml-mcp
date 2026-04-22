@@ -13,7 +13,6 @@ import random
 import httpx
 from fastmcp import Context
 from fastmcp.exceptions import ToolError
-from mcp.shared.exceptions import McpError
 
 from cml_mcp.cml.simple_webserver.schemas.common import UUID4Type
 from cml_mcp.cml.simple_webserver.schemas.nodes import Node, NodeConfigurationContent, NodeCreate
@@ -284,23 +283,12 @@ def register_tools(mcp):  # noqa: C901
     )
     async def wipe_cml_node(lab_name: str, node_label: str, ctx: Context) -> bool:
         """
-        Wipe node by lab name and node label. Erases all node data. Node must be stopped first. CRITICAL: Always ask "Confirm wipe of [item]?"
-        and wait for user's "yes" before wiping.
+        Wipe node by lab name and node label. Erases all node data. Node must be stopped first.
         """
         client = get_cml_client_dep()
         try:
             lid = await resolve_lab_id(lab_name, client)
             nid = await resolve_node_id(lid, node_label, lab_name, client)
-            elicit_supported = True
-            try:
-                result = await ctx.elicit("Are you sure you want to wipe the node?", response_type=None)
-            except (McpError, Exception) as e:
-                # Any error (unsupported, connection closed, stream error) means we can't
-                # get confirmation — proceed without it rather than aborting the operation.
-                logger.debug(f"elicit() failed (treating as unsupported): {type(e).__name__}: {e}")
-                elicit_supported = False
-            if elicit_supported and result.action != "accept":
-                raise Exception("Wipe operation cancelled by user.")
             await _run_with_heartbeat(wipe_node(lid, nid, client), ctx, f"Wiping node '{node_label}'...")
             return True
         except ToolError:
@@ -316,23 +304,12 @@ def register_tools(mcp):  # noqa: C901
     )
     async def delete_cml_node(lab_name: str, node_label: str, ctx: Context) -> bool:
         """
-        Delete node by lab name and node label. Auto-stops and wipes if needed. CRITICAL: Always ask "Confirm deletion of [item]?" and wait for
-        user's "yes" before deleting.
+        Delete node by lab name and node label. Auto-stops and wipes before deleting.
         """
         client = get_cml_client_dep()
         try:
             lid = await resolve_lab_id(lab_name, client)
             nid = await resolve_node_id(lid, node_label, lab_name, client)
-            elicit_supported = True
-            try:
-                result = await ctx.elicit("Are you sure you want to delete the node?", response_type=None)
-            except (McpError, Exception) as e:
-                # Any error (unsupported, connection closed, stream error) means we can't
-                # get confirmation — proceed without it rather than aborting the operation.
-                logger.debug(f"elicit() failed (treating as unsupported): {type(e).__name__}: {e}")
-                elicit_supported = False
-            if elicit_supported and result.action != "accept":
-                raise Exception("Delete operation cancelled by user.")
             await _run_with_heartbeat(stop_node(lid, nid, client), ctx, f"Stopping node '{node_label}' before deletion...")
             await _run_with_heartbeat(wipe_node(lid, nid, client), ctx, f"Wiping node '{node_label}'...")
             await client.delete(f"/labs/{lid}/nodes/{nid}")
