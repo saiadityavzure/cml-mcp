@@ -14,7 +14,6 @@ import httpx
 from fastmcp import Context
 from fastmcp.exceptions import ToolError
 from mcp.shared.exceptions import McpError
-from mcp.types import INVALID_REQUEST, METHOD_NOT_FOUND
 
 from cml_mcp.cml.simple_webserver.schemas.common import UUID4Type
 from cml_mcp.cml.simple_webserver.schemas.nodes import Node, NodeConfigurationContent, NodeCreate
@@ -295,15 +294,10 @@ def register_tools(mcp):  # noqa: C901
             elicit_supported = True
             try:
                 result = await ctx.elicit("Are you sure you want to wipe the node?", response_type=None)
-            except McpError as me:
-                if me.error.code == METHOD_NOT_FOUND or me.error.code == INVALID_REQUEST:
-                    elicit_supported = False
-                else:
-                    raise me
-            except Exception as e:
-                # Handle stream closure errors (common in stateless HTTP when client disconnects)
-                # Treat as if elicit is not supported and proceed without confirmation
-                logger.debug(f"elicit() failed (possibly client disconnect): {type(e).__name__}: {e}")
+            except (McpError, Exception) as e:
+                # Any error (unsupported, connection closed, stream error) means we can't
+                # get confirmation — proceed without it rather than aborting the operation.
+                logger.debug(f"elicit() failed (treating as unsupported): {type(e).__name__}: {e}")
                 elicit_supported = False
             if elicit_supported and result.action != "accept":
                 raise Exception("Wipe operation cancelled by user.")
@@ -332,15 +326,10 @@ def register_tools(mcp):  # noqa: C901
             elicit_supported = True
             try:
                 result = await ctx.elicit("Are you sure you want to delete the node?", response_type=None)
-            except McpError as me:
-                if me.error.code == METHOD_NOT_FOUND or me.error.code == INVALID_REQUEST:
-                    elicit_supported = False
-                else:
-                    raise me
-            except Exception as e:
-                # Handle stream closure errors (common in stateless HTTP when client disconnects)
-                # Treat as if elicit is not supported and proceed without confirmation
-                logger.debug(f"elicit() failed (possibly client disconnect): {type(e).__name__}: {e}")
+            except (McpError, Exception) as e:
+                # Any error (unsupported, connection closed, stream error) means we can't
+                # get confirmation — proceed without it rather than aborting the operation.
+                logger.debug(f"elicit() failed (treating as unsupported): {type(e).__name__}: {e}")
                 elicit_supported = False
             if elicit_supported and result.action != "accept":
                 raise Exception("Delete operation cancelled by user.")
