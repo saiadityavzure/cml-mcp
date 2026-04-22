@@ -8,12 +8,14 @@ Interface management tools for CML MCP server.
 import logging
 
 import httpx
+from fastmcp import Context
 from fastmcp.exceptions import ToolError
 
 from cml_mcp.cml.simple_webserver.schemas.common import UUID4Type
 from cml_mcp.cml.simple_webserver.schemas.interfaces import InterfaceCreate
 from cml_mcp.cml_client import CMLClient
-from cml_mcp.tools.dependencies import get_cml_client_dep, resolve_lab_id, resolve_node_id
+from cml_mcp.tools.dependencies import get_cml_client_dep, resolve_lab_id, resolve_node_id, run_with_heartbeat
+from cml_mcp.tools.nodes import stop_node, wipe_node
 from cml_mcp.types import SimplifiedInterfaceResponse
 
 logger = logging.getLogger("cml-mcp.tools.interfaces")
@@ -48,11 +50,14 @@ def register_tools(mcp):
     async def add_interface_to_node(
         lab_name: str,
         node_label: str,
+        ctx: Context,
         slot: int | None = None,
         mac_address: str | None = None,
     ) -> SimplifiedInterfaceResponse:
         """
         Add interface to node by lab name and node label. Returns interface with id, node, slot, type, and MAC address.
+        If the node has been started before, it is automatically stopped and wiped first (physical config is locked after boot).
+        Wiping erases runtime state — reconfigure the node and restart it after adding the interface.
         slot: interface slot number 0-128 (optional, CML picks next available if omitted).
         mac_address: "00:11:22:33:44:55" format (optional).
         """
@@ -60,16 +65,16 @@ def register_tools(mcp):
         try:
             lid = await resolve_lab_id(lab_name, client)
             nid = await resolve_node_id(lid, node_label, lab_name, client)
-            node_info = await client.get(f"/labs/{lid}/nodes/{nid}", params={"data": True, "operational": False, "exclude_configurations": True})
-            state = node_info.get("state", "").upper()
-            if state not in ("DEFINED_ON_CORE", "STOPPED"):
-                raise ToolError(
-                    f"Node '{node_label}' is currently in state '{state}'. "
-                    "Interfaces can only be added when the node is stopped or not yet started. "
-                    "Stop the node first with stop_cml_node, then retry."
-                )
             intf = InterfaceCreate(node=nid, slot=slot, mac_address=mac_address)
-            return await add_interface(lid, intf, client)
+            try:
+                return await add_interface(lid, intf, client)
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 400 and "locked" in e.response.text.lower():
+                    logger.info(f"Node '{node_label}' config is locked — auto stopping and wiping before adding interface")
+                    await run_with_heartbeat(stop_node(lid, nid, client), ctx, f"Stopping '{node_label}' to unlock physical config...")
+                    await run_with_heartbeat(wipe_node(lid, nid, client), ctx, f"Wiping '{node_label}' to unlock physical config...")
+                    return await add_interface(lid, intf, client)
+                raise
         except ToolError:
             raise
         except httpx.HTTPStatusError as e:

@@ -27,11 +27,14 @@ Dependency injection module for CML client management.
 """
 
 import ast
+import asyncio
 import contextvars
 import json
 import logging
 import unicodedata
 from typing import Any, Optional
+
+from fastmcp import Context
 
 from fastmcp.exceptions import ToolError
 
@@ -166,3 +169,21 @@ def get_cml_client_dep() -> CMLClient:
         if cml_client is None:
             raise RuntimeError("Global CML client is not initialized. This should never happen in stdio mode.")
         return cml_client
+
+
+async def run_with_heartbeat(coro, ctx: Context, message: str, interval: int = 8) -> None:
+    """Run a coroutine while sending periodic MCP progress notifications to keep SSE alive."""
+    task = asyncio.create_task(coro)
+    elapsed = 0
+    while not task.done():
+        try:
+            await ctx.report_progress(elapsed, None, message)
+        except Exception:
+            pass
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=interval)
+            break
+        except asyncio.TimeoutError:
+            elapsed += interval
+    if not task.done():
+        await task

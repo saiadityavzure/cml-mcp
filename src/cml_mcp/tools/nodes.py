@@ -17,7 +17,7 @@ from fastmcp.exceptions import ToolError
 from cml_mcp.cml.simple_webserver.schemas.common import UUID4Type
 from cml_mcp.cml.simple_webserver.schemas.nodes import Node, NodeConfigurationContent, NodeCreate
 from cml_mcp.cml_client import CMLClient
-from cml_mcp.tools.dependencies import get_cml_client_dep, resolve_lab_id, resolve_node_id
+from cml_mcp.tools.dependencies import get_cml_client_dep, resolve_lab_id, resolve_node_id, run_with_heartbeat
 
 logger = logging.getLogger("cml-mcp.tools.nodes")
 
@@ -45,26 +45,6 @@ async def wipe_node(lid: UUID4Type, nid: UUID4Type, client: CMLClient) -> None:
     """
     await client.put(f"/labs/{lid}/nodes/{nid}/wipe_disks")
 
-
-async def _run_with_heartbeat(coro, ctx: Context, message: str, interval: int = 8) -> None:
-    """
-    Run a coroutine while sending periodic MCP progress notifications.
-    Keeps the SSE connection alive during long-running CML API calls.
-    """
-    task = asyncio.create_task(coro)
-    elapsed = 0
-    while not task.done():
-        try:
-            await ctx.report_progress(elapsed, None, message)
-        except Exception:
-            pass
-        try:
-            await asyncio.wait_for(asyncio.shield(task), timeout=interval)
-            break
-        except asyncio.TimeoutError:
-            elapsed += interval
-    if not task.done():
-        await task
 
 
 _PLACEMENT_MIN = 100
@@ -221,7 +201,7 @@ def register_tools(mcp):  # noqa: C901
         try:
             lid = await resolve_lab_id(lab_name, client)
             nid = await resolve_node_id(lid, node_label, lab_name, client)
-            await _run_with_heartbeat(
+            await run_with_heartbeat(
                 stop_node(lid, nid, client), ctx, f"Stopping node '{node_label}'..."
             )
             return True
@@ -254,7 +234,7 @@ def register_tools(mcp):  # noqa: C901
         try:
             lid = await resolve_lab_id(lab_name, client)
             nid = await resolve_node_id(lid, node_label, lab_name, client)
-            await _run_with_heartbeat(
+            await run_with_heartbeat(
                 client.put(f"/labs/{lid}/nodes/{nid}/state/start"), ctx, f"Starting node '{node_label}'..."
             )
             if wait_for_convergence:
@@ -289,7 +269,7 @@ def register_tools(mcp):  # noqa: C901
         try:
             lid = await resolve_lab_id(lab_name, client)
             nid = await resolve_node_id(lid, node_label, lab_name, client)
-            await _run_with_heartbeat(wipe_node(lid, nid, client), ctx, f"Wiping node '{node_label}'...")
+            await run_with_heartbeat(wipe_node(lid, nid, client), ctx, f"Wiping node '{node_label}'...")
             return True
         except ToolError:
             raise
@@ -310,8 +290,8 @@ def register_tools(mcp):  # noqa: C901
         try:
             lid = await resolve_lab_id(lab_name, client)
             nid = await resolve_node_id(lid, node_label, lab_name, client)
-            await _run_with_heartbeat(stop_node(lid, nid, client), ctx, f"Stopping node '{node_label}' before deletion...")
-            await _run_with_heartbeat(wipe_node(lid, nid, client), ctx, f"Wiping node '{node_label}'...")
+            await run_with_heartbeat(stop_node(lid, nid, client), ctx, f"Stopping node '{node_label}' before deletion...")
+            await run_with_heartbeat(wipe_node(lid, nid, client), ctx, f"Wiping node '{node_label}'...")
             await client.delete(f"/labs/{lid}/nodes/{nid}")
             return True
         except ToolError:
