@@ -21,18 +21,18 @@ logger = logging.getLogger("cml-mcp.tools.interfaces")
 
 async def add_interface(lid: UUID4Type, intf: InterfaceCreate, client: CMLClient) -> SimplifiedInterfaceResponse:
     """
-    Add an interface to a CML lab by its lab ID.
-
-    Args:
-        lid (UUID4Type): The lab ID.
-        intf (InterfaceCreate): The interface definition as an InterfaceCreate object.
-        client (CMLClient): The CML client instance.
-
-    Returns:
-        InterfaceResponse: The added interface details.
+    Add an interface to a CML node. The CML API returns a list of all interfaces after creation;
+    we return the last one (the newly added slot).
     """
     resp = await client.post(f"/labs/{lid}/interfaces", data=intf.model_dump(mode="json", exclude_none=True))
-    return SimplifiedInterfaceResponse(**resp).model_dump(exclude_unset=True)
+    # CML returns the full interface list for the node after adding; grab the last (newly created) entry
+    if isinstance(resp, list):
+        if not resp:
+            raise ToolError("CML returned an empty interface list after creation.")
+        new_iface = resp[-1]
+    else:
+        new_iface = resp
+    return SimplifiedInterfaceResponse(**new_iface).model_dump(exclude_unset=True)
 
 
 def register_tools(mcp):
@@ -60,6 +60,14 @@ def register_tools(mcp):
         try:
             lid = await resolve_lab_id(lab_name, client)
             nid = await resolve_node_id(lid, node_label, lab_name, client)
+            node_info = await client.get(f"/labs/{lid}/nodes/{nid}", params={"data": True, "operational": False, "exclude_configurations": True})
+            state = node_info.get("state", "").upper()
+            if state not in ("DEFINED_ON_CORE", "STOPPED"):
+                raise ToolError(
+                    f"Node '{node_label}' is currently in state '{state}'. "
+                    "Interfaces can only be added when the node is stopped or not yet started. "
+                    "Stop the node first with stop_cml_node, then retry."
+                )
             intf = InterfaceCreate(node=nid, slot=slot, mac_address=mac_address)
             return await add_interface(lid, intf, client)
         except ToolError:
