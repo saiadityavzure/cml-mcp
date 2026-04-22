@@ -171,7 +171,30 @@ def get_cml_client_dep() -> CMLClient:
         return cml_client
 
 
-async def run_with_heartbeat(coro, ctx: Context, message: str, interval: int = 8) -> None:
+async def resolve_link_id(lid: UUID4Type, node_a_label: str, node_b_label: str, lab_name: str, client: CMLClient) -> UUID4Type:
+    """Resolve two node labels to the UUID of the link connecting them. Raises ToolError if not found or ambiguous."""
+    logger.info(f"Resolving link between '{node_a_label}' and '{node_b_label}' in lab '{lab_name}' ({lid})")
+    nid_a = await resolve_node_id(lid, node_a_label, lab_name, client)
+    nid_b = await resolve_node_id(lid, node_b_label, lab_name, client)
+    links = await client.get(f"/labs/{lid}/links", params={"data": True})
+    matches = [
+        lnk for lnk in list(links)
+        if (lnk.get("node_a") == str(nid_a) and lnk.get("node_b") == str(nid_b))
+        or (lnk.get("node_a") == str(nid_b) and lnk.get("node_b") == str(nid_a))
+    ]
+    if not matches:
+        raise ToolError(f"No link found between '{node_a_label}' and '{node_b_label}' in lab '{lab_name}'.")
+    if len(matches) > 1:
+        raise ToolError(
+            f"Multiple links found between '{node_a_label}' and '{node_b_label}' in lab '{lab_name}'. "
+            "Use get_all_links_for_lab to list them and identify the correct one."
+        )
+    link_id = UUID4Type(matches[0]["id"])
+    logger.info(f"Resolved link '{node_a_label}' ↔ '{node_b_label}' → {link_id}")
+    return link_id
+
+
+async def run_with_heartbeat(coro, ctx: Context, message: str, interval: int = 3) -> None:
     """Run a coroutine while sending periodic MCP progress notifications to keep SSE alive."""
     task = asyncio.create_task(coro)
     elapsed = 0

@@ -13,7 +13,7 @@ from fastmcp.exceptions import ToolError
 from cml_mcp.cml.simple_webserver.schemas.common import UUID4Type
 from cml_mcp.cml.simple_webserver.schemas.interfaces import InterfaceCreate
 from cml_mcp.cml.simple_webserver.schemas.links import LinkConditionConfiguration, LinkCreate, LinkResponse
-from cml_mcp.tools.dependencies import get_cml_client_dep, parse_str_arg, resolve_lab_id
+from cml_mcp.tools.dependencies import get_cml_client_dep, parse_str_arg, resolve_lab_id, resolve_link_id
 from cml_mcp.types import SimplifiedInterfaceResponse
 
 logger = logging.getLogger("cml-mcp.tools.links")
@@ -137,41 +137,47 @@ def register_tools(mcp):
             "readOnlyHint": True,
         },
     )
-    async def get_all_links_for_lab(lid: UUID4Type) -> list[LinkResponse]:
+    async def get_all_links_for_lab(lab_name: str) -> list[LinkResponse]:
         """
-        Get lab links by UUID. Returns list with id, label, interface_a, interface_b, node_a, node_b, state, and capture_key.
+        Get all links in a lab by lab name. Returns list with id, label, interface_a, interface_b, node_a, node_b, state, and capture_key.
         """
         client = get_cml_client_dep()
-        logger.info(f"Fetching all links for lab {lid}")
         try:
+            lid = await resolve_lab_id(lab_name, client)
+            logger.info(f"Fetching all links for lab '{lab_name}' ({lid})")
             resp = await client.get(f"/labs/{lid}/links", params={"data": True})
             links = [LinkResponse(**link).model_dump(exclude_unset=True) for link in resp]
-            logger.info(f"Retrieved {len(links)} link(s) for lab {lid}")
+            logger.info(f"Retrieved {len(links)} link(s) for lab '{lab_name}'")
             return links
+        except ToolError:
+            raise
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
-            logger.error(f"Error getting links for lab {lid}: {str(e)}", exc_info=True)
+            logger.error(f"Error getting links for lab '{lab_name}': {str(e)}", exc_info=True)
             raise ToolError(e)
 
     @mcp.tool(
         annotations={"title": "Apply Link Conditioning", "readOnlyHint": False, "destructiveHint": False, "idempotentHint": True},
     )
     async def apply_link_conditioning(
-        lid: UUID4Type,
-        link_id: UUID4Type,
+        lab_name: str,
+        node_a_label: str,
+        node_b_label: str,
         condition: LinkConditionConfiguration | dict,
     ) -> bool:
         """
-        Configure link network conditions by lab and link UUID.
+        Configure link network conditions by lab name and the two node labels the link connects.
         Omit fields to leave existing values unchanged.
         Fields (all optional): bandwidth (kbps, 0-10M), latency (ms, 0-10K), loss (%, 0-100), jitter (ms, 0-10K),
         duplicate (%, 0-100), corrupt_prob (%, 0-100), gap (ms), limit (ms), reorder_prob (%, 0-100),
         delay_corr/loss_corr/duplicate_corr/reorder_corr/corrupt_corr (%, 0-100), enabled (bool).
         """
         client = get_cml_client_dep()
-        logger.info(f"Applying link conditioning to link {link_id} in lab {lid}")
         try:
+            lid = await resolve_lab_id(lab_name, client)
+            link_id = await resolve_link_id(lid, node_a_label, node_b_label, lab_name, client)
+            logger.info(f"Applying link conditioning to link {link_id} ('{node_a_label}' ↔ '{node_b_label}') in lab '{lab_name}'")
             # XXX The dict/str handling is a workaround for some LLMs that pass a JSON string
             # representation of the argument object.
             if isinstance(condition, str):
@@ -183,12 +189,14 @@ def register_tools(mcp):
                 condition = LinkConditionConfiguration(**condition)
             logger.debug(f"Link conditioning payload for {link_id}: {condition.model_dump(exclude_none=True)}")
             await client.patch(f"/labs/{lid}/links/{link_id}/condition", data=condition.model_dump(mode="json", exclude_none=True))
-            logger.info(f"Link conditioning applied to link {link_id} in lab {lid}")
+            logger.info(f"Link conditioning applied to link {link_id} in lab '{lab_name}'")
             return True
+        except ToolError:
+            raise
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
-            logger.error(f"Error conditioning link {link_id} in lab {lid}: {str(e)}", exc_info=True)
+            logger.error(f"Error conditioning link '{node_a_label}' ↔ '{node_b_label}' in lab '{lab_name}': {str(e)}", exc_info=True)
             raise ToolError(e)
 
     @mcp.tool(
@@ -199,20 +207,24 @@ def register_tools(mcp):
             "idempotentHint": True,
         },
     )
-    async def start_cml_link(lid: UUID4Type, link_id: UUID4Type) -> bool:
+    async def start_cml_link(lab_name: str, node_a_label: str, node_b_label: str) -> bool:
         """
-        Start link by lab and link UUID. Enables connectivity.
+        Start the link between two nodes by lab name and node labels. Enables connectivity on that link.
         """
         client = get_cml_client_dep()
-        logger.info(f"Starting link {link_id} in lab {lid}")
         try:
+            lid = await resolve_lab_id(lab_name, client)
+            link_id = await resolve_link_id(lid, node_a_label, node_b_label, lab_name, client)
+            logger.info(f"Starting link {link_id} ('{node_a_label}' ↔ '{node_b_label}') in lab '{lab_name}'")
             await client.put(f"/labs/{lid}/links/{link_id}/state/start")
-            logger.info(f"Link {link_id} started in lab {lid}")
+            logger.info(f"Link {link_id} started in lab '{lab_name}'")
             return True
+        except ToolError:
+            raise
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
-            logger.error(f"Error starting CML link {link_id} in lab {lid}: {str(e)}", exc_info=True)
+            logger.error(f"Error starting link '{node_a_label}' ↔ '{node_b_label}' in lab '{lab_name}': {str(e)}", exc_info=True)
             raise ToolError(e)
 
     @mcp.tool(
@@ -223,18 +235,22 @@ def register_tools(mcp):
             "idempotentHint": True,
         },
     )
-    async def stop_cml_link(lid: UUID4Type, link_id: UUID4Type) -> bool:
+    async def stop_cml_link(lab_name: str, node_a_label: str, node_b_label: str) -> bool:
         """
-        Stop link by lab and link UUID. Disables connectivity.
+        Stop the link between two nodes by lab name and node labels. Disables connectivity on that link.
         """
         client = get_cml_client_dep()
-        logger.info(f"Stopping link {link_id} in lab {lid}")
         try:
+            lid = await resolve_lab_id(lab_name, client)
+            link_id = await resolve_link_id(lid, node_a_label, node_b_label, lab_name, client)
+            logger.info(f"Stopping link {link_id} ('{node_a_label}' ↔ '{node_b_label}') in lab '{lab_name}'")
             await client.put(f"/labs/{lid}/links/{link_id}/state/stop")
-            logger.info(f"Link {link_id} stopped in lab {lid}")
+            logger.info(f"Link {link_id} stopped in lab '{lab_name}'")
             return True
+        except ToolError:
+            raise
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
-            logger.error(f"Error stopping CML link {link_id} in lab {lid}: {str(e)}", exc_info=True)
+            logger.error(f"Error stopping link '{node_a_label}' ↔ '{node_b_label}' in lab '{lab_name}': {str(e)}", exc_info=True)
             raise ToolError(e)
