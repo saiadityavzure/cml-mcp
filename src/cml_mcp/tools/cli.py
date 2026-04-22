@@ -26,7 +26,7 @@ logger = logging.getLogger("cml-mcp.tools.cli")
 def _send_cli_command_sync(
     client: CMLClient,
     lid: UUID4Type,
-    label: NodeLabel,  # pyright: ignore[reportInvalidTypeForm]
+    label: str,
     commands: str,
     config_command: bool,
 ) -> str:
