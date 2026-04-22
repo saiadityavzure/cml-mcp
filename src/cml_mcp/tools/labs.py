@@ -167,13 +167,14 @@ def register_tools(mcp):  # noqa: C901
             "idempotentHint": True,
         },
     )
-    async def modify_cml_lab(lid: UUID4Type, lab: LabRequest | dict | str) -> bool:
+    async def modify_cml_lab(lab_name: str, lab: LabRequest | dict | str) -> bool:
         """
-        Update lab metadata by UUID.
+        Update lab metadata by name.
         Modifiable: title, owner, description, notes, associations (group/user permissions).
         """
         client = get_cml_client_dep()
         try:
+            lid = await resolve_lab_id(lab_name, client)
             # XXX The dict/str handling is a workaround for some LLMs that pass a JSON string
             # representation of the argument object.
             if isinstance(lab, str):
@@ -185,10 +186,12 @@ def register_tools(mcp):  # noqa: C901
                 lab = LabRequest(**lab)
             await client.patch(f"/labs/{lid}", data=lab.model_dump(mode="json", exclude_defaults=True, exclude_none=True))
             return True
+        except ToolError:
+            raise
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
-            logger.error(f"Error modifying lab {lid}: {str(e)}", exc_info=True)
+            logger.error(f"Error modifying lab '{lab_name}': {str(e)}", exc_info=True)
             raise ToolError(e)
 
     @mcp.tool(

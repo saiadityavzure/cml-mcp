@@ -26,7 +26,7 @@ from cml_mcp.cml.simple_webserver.schemas.annotations import (
     TextAnnotationResponse,
 )
 from cml_mcp.cml.simple_webserver.schemas.common import UUID4Type
-from cml_mcp.tools.dependencies import get_cml_client_dep, parse_str_arg
+from cml_mcp.tools.dependencies import get_cml_client_dep, parse_str_arg, resolve_lab_id
 
 logger = logging.getLogger("cml-mcp.tools.annotations")
 
@@ -40,12 +40,13 @@ def register_tools(mcp):
             "readOnlyHint": True,
         },
     )
-    async def get_annotations_for_cml_lab(lid: UUID4Type) -> list[AnnotationResponse]:
+    async def get_annotations_for_cml_lab(lab_name: str) -> list[AnnotationResponse]:
         """
-        Get all visual annotations for a lab by lab UUID. Returns list of AnnotationResponse objects.
+        Get all visual annotations for a lab by lab name. Returns list of AnnotationResponse objects.
         """
         client = get_cml_client_dep()
         try:
+            lid = await resolve_lab_id(lab_name, client)
             resp = await client.get(f"/labs/{lid}/annotations")
             ann_list = []
             for annotation in resp:
@@ -63,10 +64,12 @@ def register_tools(mcp):
                     )
                 ann_list.append(annotation_obj.model_dump(exclude_unset=True))
             return ann_list
+        except ToolError:
+            raise
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
-            logger.error(f"Error getting annotations for lab {lid}: {str(e)}", exc_info=True)
+            logger.error(f"Error getting annotations for lab '{lab_name}': {str(e)}", exc_info=True)
             raise ToolError(e)
 
     @mcp.tool(
@@ -77,11 +80,11 @@ def register_tools(mcp):
         },
     )
     async def add_annotation_to_cml_lab(
-        lid: UUID4Type,
+        lab_name: str,
         annotation: EllipseAnnotation | LineAnnotation | RectangleAnnotation | TextAnnotation | dict,
     ) -> UUID4Type:
         """
-        Add visual annotation to lab. Returns annotation UUID.
+        Add visual annotation to lab by lab name. Returns annotation UUID.
         Required field: type ("text"/"rectangle"/"ellipse"/"line").
 
         Common fields: x1, y1 (coords -15000 to 15000), color, border_color, border_style (""/"2,2"/"4,2"),
@@ -97,6 +100,7 @@ def register_tools(mcp):
         """
         client = get_cml_client_dep()
         try:
+            lid = await resolve_lab_id(lab_name, client)
             # XXX The dict/str handling is a workaround for some LLMs that pass a JSON string
             # representation of the argument object.
             if isinstance(annotation, str):
@@ -119,10 +123,12 @@ def register_tools(mcp):
                     )
             resp = await client.post(f"/labs/{lid}/annotations", data=annotation.model_dump(mode="json", exclude_defaults=True))
             return UUID4Type(resp["id"])
+        except ToolError:
+            raise
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
-            logger.error(f"Error adding annotation to lab {lid}: {str(e)}", exc_info=True)
+            logger.error(f"Error adding annotation to lab '{lab_name}': {str(e)}", exc_info=True)
             raise ToolError(e)
 
     @mcp.tool(
@@ -133,13 +139,13 @@ def register_tools(mcp):
         },
     )
     async def delete_annotation_from_lab(
-        lid: UUID4Type,
+        lab_name: str,
         annotation_id: UUID4Type,
         ctx: Context,
     ) -> bool:
         """
-        Delete annotation by lab and annotation UUID. CRITICAL: Always ask "Confirm deletion of [item]?" and wait for
-        user's "yes" before deleting.
+        Delete annotation by lab name and annotation UUID. annotation_id comes from get_annotations_for_cml_lab or add_annotation_to_cml_lab.
+        CRITICAL: Always ask "Confirm deletion of [item]?" and wait for user's "yes" before deleting.
         """
         client = get_cml_client_dep()
         try:
@@ -152,16 +158,17 @@ def register_tools(mcp):
                 else:
                     raise me
             except Exception as e:
-                # Handle stream closure errors (common in stateless HTTP when client disconnects)
-                # Treat as if elicit is not supported and proceed without confirmation
                 logger.debug(f"elicit() failed (possibly client disconnect): {type(e).__name__}: {e}")
                 elicit_supported = False
             if elicit_supported and result.action != "accept":
                 raise Exception("Delete operation cancelled by user.")
+            lid = await resolve_lab_id(lab_name, client)
             await client.delete(f"/labs/{lid}/annotations/{annotation_id}")
             return True
+        except ToolError:
+            raise
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
-            logger.error(f"Error deleting annotation {annotation_id} from lab {lid}: {str(e)}", exc_info=True)
+            logger.error(f"Error deleting annotation {annotation_id} from lab '{lab_name}': {str(e)}", exc_info=True)
             raise ToolError(e)
