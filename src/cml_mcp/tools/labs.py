@@ -134,29 +134,33 @@ def register_tools(mcp):  # noqa: C901
             "destructiveHint": False,
         },
     )
-    async def create_empty_lab(lab: LabRequest | dict | str) -> UUID4Type:
+    async def create_empty_lab(
+        title: str,
+        description: str | None = None,
+        notes: str | None = None,
+    ) -> UUID4Type:
         """
-        Create empty lab. Returns lab UUID.
-        Optional: title (str, 1-64 chars), owner (UUID), description (str, max 4096 chars), notes (str, max 32768 chars),
-        associations (group/user permissions).
+        Create an empty lab with no nodes or links. Returns lab UUID.
+        title: lab name (1-64 chars).
+        description: optional short description (max 4096 chars).
+        notes: optional long-form notes (max 32768 chars).
         """
         client = get_cml_client_dep()
         try:
-            # XXX The dict/str handling is a workaround for some LLMs that pass a JSON string
-            # representation of the argument object.
-            if isinstance(lab, str):
-                try:
-                    lab = LabRequest(**parse_str_arg(lab))
-                except Exception as parse_err:
-                    raise ToolError(f"lab must be an object, got invalid string: {parse_err}")
-            elif isinstance(lab, dict):
-                lab = LabRequest(**lab)
+            lab_kwargs: dict = {"title": title}
+            if description is not None:
+                lab_kwargs["description"] = description
+            if notes is not None:
+                lab_kwargs["notes"] = notes
+            lab = LabRequest(**lab_kwargs)
             resp = await client.post("/labs", data=lab.model_dump(mode="json", exclude_defaults=True, exclude_none=True))
             return UUID4Type(resp["id"])
+        except ToolError:
+            raise
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
-            logger.error(f"Error creating empty lab topology: {str(e)}", exc_info=True)
+            logger.error(f"Error creating empty lab '{title}': {str(e)}", exc_info=True)
             raise ToolError(e)
 
     @mcp.tool(
@@ -167,23 +171,31 @@ def register_tools(mcp):  # noqa: C901
             "idempotentHint": True,
         },
     )
-    async def modify_cml_lab(lab_name: str, lab: LabRequest | dict | str) -> bool:
+    async def modify_cml_lab(
+        lab_name: str,
+        title: str | None = None,
+        description: str | None = None,
+        notes: str | None = None,
+    ) -> bool:
         """
-        Update lab metadata by name.
-        Modifiable: title, owner, description, notes, associations (group/user permissions).
+        Update lab metadata by name. Only supplied fields are changed.
+        title: new lab name (1-64 chars).
+        description: short description (max 4096 chars).
+        notes: long-form notes (max 32768 chars).
         """
         client = get_cml_client_dep()
         try:
             lid = await resolve_lab_id(lab_name, client)
-            # XXX The dict/str handling is a workaround for some LLMs that pass a JSON string
-            # representation of the argument object.
-            if isinstance(lab, str):
-                try:
-                    lab = LabRequest(**parse_str_arg(lab))
-                except Exception as parse_err:
-                    raise ToolError(f"lab must be an object, got invalid string: {parse_err}")
-            elif isinstance(lab, dict):
-                lab = LabRequest(**lab)
+            lab_kwargs: dict = {}
+            if title is not None:
+                lab_kwargs["title"] = title
+            if description is not None:
+                lab_kwargs["description"] = description
+            if notes is not None:
+                lab_kwargs["notes"] = notes
+            if not lab_kwargs:
+                raise ToolError("At least one field (title, description, notes) must be provided.")
+            lab = LabRequest(**lab_kwargs)
             await client.patch(f"/labs/{lid}", data=lab.model_dump(mode="json", exclude_defaults=True, exclude_none=True))
             return True
         except ToolError:
