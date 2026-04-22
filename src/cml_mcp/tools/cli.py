@@ -16,9 +16,8 @@ from fastmcp.exceptions import ToolError
 from virl2_client.models.cl_pyats import ClPyats, PyatsNotInstalled
 
 from cml_mcp.cml.simple_webserver.schemas.common import UUID4Type
-from cml_mcp.cml.simple_webserver.schemas.nodes import NodeLabel
 from cml_mcp.cml_client import CMLClient
-from cml_mcp.tools.dependencies import _pyats_auth_pass, _pyats_password, _pyats_username, get_cml_client_dep
+from cml_mcp.tools.dependencies import _pyats_auth_pass, _pyats_password, _pyats_username, get_cml_client_dep, resolve_lab_id, resolve_node_id
 from cml_mcp.types import ConsoleLogOutput
 
 logger = logging.getLogger("cml-mcp.tools.cli")
@@ -85,15 +84,23 @@ def register_tools(mcp):
         annotations={"title": "Get Console Logs for a CML Node", "readOnlyHint": True},
     )
     async def get_console_log(
-        lid: UUID4Type,
-        nid: UUID4Type,
+        lab_name: str,
+        node_label: str,
     ) -> list[ConsoleLogOutput]:
         """
-        Get console output history by lab and node UUID. Node must be started.
+        Get console output history by lab name and node label. Node must be started.
         Returns list of log entries with time (ms since start) and message. Includes all console ports.
         Useful for troubleshooting, monitoring boot progress, and verifying CLI command results.
         """
         client = get_cml_client_dep()
+        try:
+            lid = await resolve_lab_id(lab_name, client)
+            nid = await resolve_node_id(lid, node_label, lab_name, client)
+        except ToolError:
+            raise
+        except Exception as e:
+            logger.error(f"Error resolving '{node_label}' in lab '{lab_name}': {str(e)}", exc_info=True)
+            raise ToolError(e)
         return_lines = []
         for i in range(0, 2):  # Assume a maximum of 2 consoles per node
             try:
@@ -104,13 +111,12 @@ def register_tools(mcp):
                 else:
                     raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
             except Exception as e:
-                logger.error(f"Error getting console log for node {nid} in lab {lid}: {str(e)}", exc_info=True)
+                logger.error(f"Error getting console log for node '{node_label}' in lab '{lab_name}': {str(e)}", exc_info=True)
                 raise ToolError(e)
             lines = re.split(r"\r?\n", resp)
             for line in lines:
                 if not line.startswith("|"):
                     if len(return_lines) > 0:
-                        # Append to the last message if the line does not start with a timestamp
                         return_lines[-1].message += "\n" + line
                     continue
                 _, log_time, msg = line.split("|", 2)
@@ -122,13 +128,13 @@ def register_tools(mcp):
         annotations={"title": "Send CLI Command to CML Node", "readOnlyHint": False, "destructiveHint": True},
     )
     async def send_cli_command(
-        lid: UUID4Type,
-        label: NodeLabel,  # pyright: ignore[reportInvalidTypeForm]
+        lab_name: str,
+        node_label: str,
         commands: str,
         config_command: bool = False,
     ) -> str:
         """
-        Send CLI commands to running node by lab UUID and node label (not UUID). Node must be in BOOTED state.
+        Send CLI commands to running node by lab name and node label. Node must be in BOOTED state.
         CRITICAL: Can modify device state. Review commands before executing, especially with config_command=true.
         Separate multiple commands with newlines.
         config_command=false (default): exec/operational mode. config_command=true: config mode (omit "configure terminal"/"end").
@@ -136,17 +142,22 @@ def register_tools(mcp):
         """
         client = get_cml_client_dep()
 
-        # Verify vclient is available
         if client.vclient is None:
             raise ToolError(
                 "PyATS CLI commands require the virl2_client library. Ensure the CML client was initialized with valid credentials."
             )
 
-        # Use asyncio.to_thread to prevent blocking the event loop with synchronous operations
-        # and to avoid os.chdir() race conditions between concurrent requests
         try:
-            output = await asyncio.to_thread(_send_cli_command_sync, client, lid, label, commands, config_command)
+            lid = await resolve_lab_id(lab_name, client)
+        except ToolError:
+            raise
+        except Exception as e:
+            logger.error(f"Error resolving lab '{lab_name}': {str(e)}", exc_info=True)
+            raise ToolError(e)
+
+        try:
+            output = await asyncio.to_thread(_send_cli_command_sync, client, lid, node_label, commands, config_command)
             return output
         except Exception as e:
-            logger.error(f"Error sending CLI command '{commands}' to node {label} in lab {lid}: {str(e)}", exc_info=True)
+            logger.error(f"Error sending CLI command '{commands}' to node '{node_label}' in lab '{lab_name}': {str(e)}", exc_info=True)
             raise ToolError(e)

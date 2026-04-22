@@ -171,23 +171,27 @@ def register_tools(mcp):  # noqa: C901
         annotations={"title": "Configure a CML Node", "readOnlyHint": False, "destructiveHint": False, "idempotentHint": True},
     )
     async def configure_cml_node(
-        lid: UUID4Type,
-        nid: UUID4Type,
+        lab_name: str,
+        node_label: str,
         config: NodeConfigurationContent,
     ) -> bool:
         """
-        Set node startup config by lab and node UUID. config is a plain string of device commands.
-        Node must be in CREATED state (new or wiped). More efficient than starting node and sending CLI.
+        Set node startup config by lab name and node label. config is a plain string of device commands.
+        Node must be stopped or not yet started (DEFINED_ON_CORE/STOPPED). More efficient than starting node and sending CLI.
         """
         client = get_cml_client_dep()
         payload = {"configuration": str(config)}
         try:
+            lid = await resolve_lab_id(lab_name, client)
+            nid = await resolve_node_id(lid, node_label, lab_name, client)
             await client.patch(f"/labs/{lid}/nodes/{nid}", data=payload)
             return True
+        except ToolError:
+            raise
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
-            logger.error(f"Error configuring CML node {nid} in lab {lid}: {str(e)}", exc_info=True)
+            logger.error(f"Error configuring CML node '{node_label}' in lab '{lab_name}': {str(e)}", exc_info=True)
             raise ToolError(e)
 
     @mcp.tool(
