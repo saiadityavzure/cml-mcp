@@ -15,7 +15,7 @@ from fastmcp.exceptions import ToolError
 from cml_mcp.cml.simple_webserver.schemas.common import UUID4Type
 from cml_mcp.cml.simple_webserver.schemas.pcap import PCAPItem, PCAPStart, PCAPStatusResponse
 from cml_mcp.cml_client import CMLClient
-from cml_mcp.tools.dependencies import get_cml_client_dep, parse_str_arg
+from cml_mcp.tools.dependencies import get_cml_client_dep, parse_str_arg, resolve_lab_id, resolve_link_id
 
 logger = logging.getLogger("cml-mcp.tools.pcap")
 
@@ -36,13 +36,20 @@ def register_tools(mcp):
     @mcp.tool(
         annotations={"title": "Start a Packet Capture on a Link", "readOnlyHint": False, "destructiveHint": False},
     )
-    async def start_packet_capture(lid: UUID4Type, link_id: UUID4Type, pcap: PCAPStart | dict) -> bool:
+    async def start_packet_capture(
+        lab_name: str,
+        node_a_label: str,
+        node_b_label: str,
+        pcap: PCAPStart | dict,
+    ) -> bool:
         """
-        Start a packet capture by lab and link UUID. At least one of maxtime or maxpackets is
-        required in pcap.  Returns true if successful.
+        Start a packet capture on the link between two nodes by lab name and node labels.
+        At least one of maxtime or maxpackets is required in pcap. Returns true if successful.
         """
         client = get_cml_client_dep()
         try:
+            lid = await resolve_lab_id(lab_name, client)
+            link_id = await resolve_link_id(lid, node_a_label, node_b_label, lab_name, client)
             # XXX The dict/str handling is a workaround for some LLMs that pass a JSON string
             # representation of the argument object.
             if isinstance(pcap, str):
@@ -54,84 +61,100 @@ def register_tools(mcp):
                 pcap = PCAPStart(**pcap)
             await client.put(f"/labs/{lid}/links/{link_id}/capture/start", data=pcap.model_dump(mode="json", exclude_none=True))
             return True
+        except ToolError:
+            raise
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
-            logger.error(f"Error starting packet capture on link {link_id} in lab {lid}: {str(e)}", exc_info=True)
+            logger.error(f"Error starting packet capture on link '{node_a_label}' ↔ '{node_b_label}' in lab '{lab_name}': {str(e)}", exc_info=True)
             raise ToolError(e)
 
     @mcp.tool(
         annotations={"title": "Stop a Packet Capture on a Link", "readOnlyHint": False, "destructiveHint": False},
     )
-    async def stop_packet_capture(lid: UUID4Type, link_id: UUID4Type) -> bool:
+    async def stop_packet_capture(lab_name: str, node_a_label: str, node_b_label: str) -> bool:
         """
-        Stop a packet capture by lab and link UUID.  Returns true if successful.
+        Stop a packet capture on the link between two nodes by lab name and node labels. Returns true if successful.
         """
         client = get_cml_client_dep()
         try:
+            lid = await resolve_lab_id(lab_name, client)
+            link_id = await resolve_link_id(lid, node_a_label, node_b_label, lab_name, client)
             await client.put(f"/labs/{lid}/links/{link_id}/capture/stop")
             return True
+        except ToolError:
+            raise
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
-            logger.error(f"Error stopping packet capture on link {link_id} in lab {lid}: {str(e)}", exc_info=True)
+            logger.error(f"Error stopping packet capture on link '{node_a_label}' ↔ '{node_b_label}' in lab '{lab_name}': {str(e)}", exc_info=True)
             raise ToolError(e)
 
     @mcp.tool(
         annotations={"title": "Check Packet Capture Status on a Link", "readOnlyHint": True},
     )
-    async def check_packet_capture_status(lid: UUID4Type, link_id: UUID4Type) -> PCAPStatusResponse:
+    async def check_packet_capture_status(lab_name: str, node_a_label: str, node_b_label: str) -> PCAPStatusResponse:
         """
-        Check if a packet capture is active on a link by lab and link UUID.
+        Check if a packet capture is active on the link between two nodes by lab name and node labels.
         Returns capture config and number of packets captured so far.
         """
         client = get_cml_client_dep()
         try:
+            lid = await resolve_lab_id(lab_name, client)
+            link_id = await resolve_link_id(lid, node_a_label, node_b_label, lab_name, client)
             status = await client.get(f"/labs/{lid}/links/{link_id}/capture/status")
             return PCAPStatusResponse(**status).model_dump(exclude_unset=True)
+        except ToolError:
+            raise
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
-            logger.error(f"Error checking packet capture status on link {link_id} in lab {lid}: {str(e)}", exc_info=True)
+            logger.error(f"Error checking packet capture status on link '{node_a_label}' ↔ '{node_b_label}' in lab '{lab_name}': {str(e)}", exc_info=True)
             raise ToolError(e)
 
     @mcp.tool(
         annotations={"title": "Get packet capture overview", "readOnlyHint": True},
     )
-    async def get_captured_packet_overview(lid: UUID4Type, link_id: UUID4Type) -> list[PCAPItem]:
+    async def get_captured_packet_overview(lab_name: str, node_a_label: str, node_b_label: str) -> list[PCAPItem]:
         """
-        Get a brief summary of each packet captured on a link by lab and link UUID. Returns list of PCAPItem objects.
+        Get a brief summary of each packet captured on the link between two nodes by lab name and node labels.
+        Returns list of PCAPItem objects.
         """
         client = get_cml_client_dep()
         try:
+            lid = await resolve_lab_id(lab_name, client)
+            link_id = await resolve_link_id(lid, node_a_label, node_b_label, lab_name, client)
             key = await get_capture_key(lid, link_id, client)
             packets = await client.get(f"/pcap/{key}/packets")
             return [PCAPItem(**packet).model_dump(exclude_unset=True) for packet in packets]
+        except ToolError:
+            raise
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
-            logger.error(f"Error getting packet capture overview on link {link_id} in lab {lid}: {str(e)}", exc_info=True)
+            logger.error(f"Error getting packet capture overview on link '{node_a_label}' ↔ '{node_b_label}' in lab '{lab_name}': {str(e)}", exc_info=True)
             raise ToolError(e)
 
     @mcp.tool(
         annotations={"title": "Get Full Packets from a Packet Capture", "readOnlyHint": True},
     )
-    async def get_packet_capture_data(lid: UUID4Type, link_id: UUID4Type) -> str:
+    async def get_packet_capture_data(lab_name: str, node_a_label: str, node_b_label: str) -> str:
         """
-        Download complete packet capture by lab and link UUID. Returns base64-encoded PCAP file.
-        Decode and save as .pcap file for use with Wireshark, tcpdump, or other packet analysis tools.
+        Download complete packet capture on the link between two nodes by lab name and node labels.
+        Returns base64-encoded PCAP file. Decode and save as .pcap file for use with Wireshark, tcpdump, or other packet analysis tools.
         """
         client = get_cml_client_dep()
         try:
-            # Get the capture key for the link
+            lid = await resolve_lab_id(lab_name, client)
+            link_id = await resolve_link_id(lid, node_a_label, node_b_label, lab_name, client)
             key = await get_capture_key(lid, link_id, client)
-            # Download the PCAP data using the capture key
             pcap_data = await client.get(f"/pcap/{key}", is_binary=True)
-            # Encode the binary PCAP data to a base64 string
             encoded_pcap = base64.b64encode(pcap_data).decode("utf-8")
             return encoded_pcap
+        except ToolError:
+            raise
         except httpx.HTTPStatusError as e:
             raise ToolError(f"HTTP error {e.response.status_code}: {e.response.text}")
         except Exception as e:
-            logger.error(f"Error getting packet capture data from link {link_id} in lab {lid}: {str(e)}", exc_info=True)
+            logger.error(f"Error getting packet capture data from link '{node_a_label}' ↔ '{node_b_label}' in lab '{lab_name}': {str(e)}", exc_info=True)
             raise ToolError(e)
