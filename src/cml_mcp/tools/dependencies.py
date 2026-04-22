@@ -194,7 +194,7 @@ async def resolve_link_id(lid: UUID4Type, node_a_label: str, node_b_label: str, 
     return link_id
 
 
-async def run_with_heartbeat(coro, ctx: Context, message: str, interval: int = 3) -> None:
+async def run_with_heartbeat(coro, ctx: Context, message: str, interval: int = 1) -> None:
     """Run a coroutine while sending periodic MCP progress notifications to keep SSE alive."""
     task = asyncio.create_task(coro)
     elapsed = 0
