@@ -244,10 +244,11 @@ def register_tools(mcp):  # noqa: C901
     async def start_cml_lab(
         lab_name: str,
         ctx: Context,
-        wait_for_convergence: bool = False,
+        wait_for_convergence: bool = True,
     ) -> bool:
         """
-        Start lab by name. Set wait_for_convergence=true to wait until all nodes reach stable state.
+        Start lab by name and wait until all nodes reach a stable state.
+        Set wait_for_convergence=false to return immediately after issuing the start command (nodes may still be booting).
         """
         client = get_cml_client_dep()
         try:

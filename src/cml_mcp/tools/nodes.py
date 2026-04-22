@@ -229,10 +229,11 @@ def register_tools(mcp):  # noqa: C901
         lab_name: str,
         node_label: str,
         ctx: Context,
-        wait_for_convergence: bool = False,
+        wait_for_convergence: bool = True,
     ) -> bool:
         """
-        Start node by lab name and node label. Set wait_for_convergence=true to wait until node reaches stable state.
+        Start node by lab name and node label and wait until it reaches a stable state.
+        Set wait_for_convergence=false to return immediately after issuing the start command.
         """
         client = get_cml_client_dep()
         try:
