@@ -30,6 +30,7 @@ import ast
 import contextvars
 import json
 import logging
+import unicodedata
 from typing import Any, Optional
 
 from fastmcp.exceptions import ToolError
@@ -39,6 +40,17 @@ from cml_mcp.cml_client import CMLClient
 from cml_mcp.settings import settings
 
 logger = logging.getLogger("cml-mcp.dependencies")
+
+# Unicode characters that LLMs commonly substitute for ASCII hyphen-minus (U+002D)
+_UNICODE_HYPHENS = str.maketrans(
+    "‐‑‒–—―−﹘﹣－",
+    "----------",
+)
+
+
+def _normalize_label(label: str) -> str:
+    """Normalize a label for comparison: NFKC unicode normalization + ASCII hyphen substitution."""
+    return unicodedata.normalize("NFKC", label).translate(_UNICODE_HYPHENS)
 
 # Global singleton client for stdio transport
 # Only initialize if we're using stdio transport to avoid resource waste
@@ -100,7 +112,8 @@ async def resolve_node_id(lid: UUID4Type, node_label: str, lab_name: str, client
     """Resolve a node label to its UUID within a lab. Raises ToolError if not found or ambiguous."""
     logger.info(f"Resolving node label '{node_label}' in lab '{lab_name}' ({lid})")
     nodes = await client.get(f"/labs/{lid}/nodes", params={"data": True, "operational": False, "exclude_configurations": True})
-    matches = [n for n in list(nodes) if n.get("label") == node_label]
+    needle = _normalize_label(node_label)
+    matches = [n for n in list(nodes) if _normalize_label(n.get("label", "")) == needle]
     if not matches:
         logger.error(f"No node with label '{node_label}' found in lab '{lab_name}'")
         raise ToolError(f"No node found with label '{node_label}' in lab '{lab_name}'.")
@@ -116,10 +129,11 @@ async def resolve_lab_id(lab_name: str, client: CMLClient) -> UUID4Type:
     """Resolve a lab title to its UUID. Raises ToolError if not found or ambiguous."""
     logger.info(f"Resolving lab name '{lab_name}' to UUID")
     labs = await client.get("/labs", params={"show_all": True})
+    needle = _normalize_label(lab_name)
     matches = []
     for lid in labs:
         lab = await client.get(f"/labs/{lid}")
-        if lab.get("lab_title") == lab_name:
+        if _normalize_label(lab.get("lab_title", "")) == needle:
             matches.append(UUID4Type(lid))
             logger.debug(f"Lab name match: '{lab_name}' → {lid}")
     if not matches:

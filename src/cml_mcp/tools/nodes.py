@@ -48,6 +48,27 @@ async def wipe_node(lid: UUID4Type, nid: UUID4Type, client: CMLClient) -> None:
     await client.put(f"/labs/{lid}/nodes/{nid}/wipe_disks")
 
 
+async def _run_with_heartbeat(coro, ctx: Context, message: str, interval: int = 8) -> None:
+    """
+    Run a coroutine while sending periodic MCP progress notifications.
+    Keeps the SSE connection alive during long-running CML API calls.
+    """
+    task = asyncio.create_task(coro)
+    elapsed = 0
+    while not task.done():
+        try:
+            await ctx.report_progress(elapsed, None, message)
+        except Exception:
+            pass
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=interval)
+            break
+        except asyncio.TimeoutError:
+            elapsed += interval
+    if not task.done():
+        await task
+
+
 _PLACEMENT_MIN = 100
 _PLACEMENT_MAX = 2000
 _PLACEMENT_CLEARANCE = 200
@@ -194,7 +215,7 @@ def register_tools(mcp):  # noqa: C901
     @mcp.tool(
         annotations={"title": "Stop a CML Node", "readOnlyHint": False, "destructiveHint": False, "idempotentHint": True},
     )
-    async def stop_cml_node(lab_name: str, node_label: str) -> bool:
+    async def stop_cml_node(lab_name: str, node_label: str, ctx: Context) -> bool:
         """
         Stop node by lab name and node label. Powers down the node.
         """
@@ -202,7 +223,9 @@ def register_tools(mcp):  # noqa: C901
         try:
             lid = await resolve_lab_id(lab_name, client)
             nid = await resolve_node_id(lid, node_label, lab_name, client)
-            await stop_node(lid, nid, client)
+            await _run_with_heartbeat(
+                stop_node(lid, nid, client), ctx, f"Stopping node '{node_label}'..."
+            )
             return True
         except ToolError:
             raise
@@ -223,6 +246,7 @@ def register_tools(mcp):  # noqa: C901
     async def start_cml_node(
         lab_name: str,
         node_label: str,
+        ctx: Context,
         wait_for_convergence: bool = False,
     ) -> bool:
         """
@@ -232,13 +256,21 @@ def register_tools(mcp):  # noqa: C901
         try:
             lid = await resolve_lab_id(lab_name, client)
             nid = await resolve_node_id(lid, node_label, lab_name, client)
-            await client.put(f"/labs/{lid}/nodes/{nid}/state/start")
+            await _run_with_heartbeat(
+                client.put(f"/labs/{lid}/nodes/{nid}/state/start"), ctx, f"Starting node '{node_label}'..."
+            )
             if wait_for_convergence:
+                elapsed = 0
                 while True:
                     converged = await client.get(f"/labs/{lid}/nodes/{nid}/check_if_converged")
                     if converged:
                         break
+                    try:
+                        await ctx.report_progress(elapsed, None, f"Waiting for '{node_label}' to converge...")
+                    except Exception:
+                        pass
                     await asyncio.sleep(3)
+                    elapsed += 3
             return True
         except ToolError:
             raise
@@ -275,7 +307,7 @@ def register_tools(mcp):  # noqa: C901
                 elicit_supported = False
             if elicit_supported and result.action != "accept":
                 raise Exception("Wipe operation cancelled by user.")
-            await wipe_node(lid, nid, client)
+            await _run_with_heartbeat(wipe_node(lid, nid, client), ctx, f"Wiping node '{node_label}'...")
             return True
         except ToolError:
             raise
@@ -312,8 +344,8 @@ def register_tools(mcp):  # noqa: C901
                 elicit_supported = False
             if elicit_supported and result.action != "accept":
                 raise Exception("Delete operation cancelled by user.")
-            await stop_node(lid, nid, client)  # Ensure the node is stopped before deletion
-            await wipe_node(lid, nid, client)
+            await _run_with_heartbeat(stop_node(lid, nid, client), ctx, f"Stopping node '{node_label}' before deletion...")
+            await _run_with_heartbeat(wipe_node(lid, nid, client), ctx, f"Wiping node '{node_label}'...")
             await client.delete(f"/labs/{lid}/nodes/{nid}")
             return True
         except ToolError:
