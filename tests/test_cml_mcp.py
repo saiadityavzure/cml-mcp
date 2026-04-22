@@ -434,14 +434,10 @@ async def test_intf_management(main_mcp_client: Client[FastMCPTransport], create
     lab_id, lab_create = created_lab
     lab_name = str(lab_create.title)
 
-    node_create = NodeCreate(
-        node_definition="iol-xe",
-        label="MCP Test Node",
-        x=100,
-        y=100,
-        configuration="hostname MCP-Test-Node\n!end\n",
+    node_result = await main_mcp_client.call_tool(
+        name="add_node_to_cml_lab",
+        arguments={"lab_name": lab_name, "node_definition": "iol-xe", "label": "MCP Test Node", "configuration": "hostname MCP-Test-Node\n!end\n"},
     )
-    node_result = await main_mcp_client.call_tool(name="add_node_to_cml_lab", arguments={"lab_name": lab_name, "node": node_create})
     assert isinstance(node_result.content, list)
     assert len(node_result.content) > 0
     assert isinstance(node_result.content[0], TextContent)
@@ -604,14 +600,11 @@ async def test_get_nodes_for_cml_lab_mock(main_mcp_client: Client[FastMCPTranspo
 
 @pytest.mark.mock_only
 async def test_add_node_to_cml_lab_mock(main_mcp_client: Client[FastMCPTransport]):
-    """Test add_node_to_cml_lab with a lab name. Uses 'Branch Test' which is unique in mock data."""
-    node_create = NodeCreate(
-        node_definition="iol-xe",
-        label="Mock Test Node",
-        x=100,
-        y=100,
+    """Test add_node_to_cml_lab with flat args. Uses 'Branch Test' which is unique in mock data."""
+    result = await main_mcp_client.call_tool(
+        name="add_node_to_cml_lab",
+        arguments={"lab_name": "Branch Test", "node_definition": "iol-xe", "label": "Mock Test Node"},
     )
-    result = await main_mcp_client.call_tool(name="add_node_to_cml_lab", arguments={"lab_name": "Branch Test", "node": node_create})
     assert isinstance(result.content, list)
     assert len(result.content) > 0
     assert isinstance(result.content[0], TextContent)
@@ -686,27 +679,19 @@ async def test_connect_nodes_by_label(main_mcp_client: Client[FastMCPTransport],
     lab_id, lab_create = created_lab
     lab_name = str(lab_create.title)
 
-    node1_create = NodeCreate(
-        node_definition="iol-xe",
-        label="MCP Test Node 1",
-        x=100,
-        y=100,
-        configuration="hostname MCP-Test-Node-1\ninterface Ethernet0/0\nip address 192.0.2.1 255.255.255.0\nno shut\n!end\n",
+    node1_result = await main_mcp_client.call_tool(
+        name="add_node_to_cml_lab",
+        arguments={"lab_name": lab_name, "node_definition": "iol-xe", "label": "MCP Test Node 1", "configuration": "hostname MCP-Test-Node-1\ninterface Ethernet0/0\nip address 192.0.2.1 255.255.255.0\nno shut\n!end\n"},
     )
-    node1_result = await main_mcp_client.call_tool(name="add_node_to_cml_lab", arguments={"lab_name": lab_name, "node": node1_create})
     assert isinstance(node1_result.content, list)
     assert len(node1_result.content) > 0
     assert isinstance(node1_result.content[0], TextContent)
     node1_id = UUID4Type(node1_result.content[0].text)
 
-    node2_create = NodeCreate(
-        node_definition="iol-xe",
-        label="MCP Test Node 2",
-        x=300,
-        y=100,
-        configuration="hostname MCP-Test-Node-2\ninterface Ethernet0/0\nip address 192.0.2.2 255.255.255.0\nno shut\n!end\n",
+    node2_result = await main_mcp_client.call_tool(
+        name="add_node_to_cml_lab",
+        arguments={"lab_name": lab_name, "node_definition": "iol-xe", "label": "MCP Test Node 2", "configuration": "hostname MCP-Test-Node-2\ninterface Ethernet0/0\nip address 192.0.2.2 255.255.255.0\nno shut\n!end\n"},
     )
-    node2_result = await main_mcp_client.call_tool(name="add_node_to_cml_lab", arguments={"lab_name": lab_name, "node": node2_create})
     assert isinstance(node2_result.content, list)
     assert len(node2_result.content) > 0
     assert isinstance(node2_result.content[0], TextContent)
@@ -741,16 +726,11 @@ async def test_get_nodes_for_cml_lab(main_mcp_client: Client[FastMCPTransport], 
     lab_id, lab_create = created_lab
     lab_name = str(lab_create.title)
 
-    node_create = NodeCreate(
-        node_definition="iol-xe",
-        label="MCP Test Node",
-        x=100,
-        y=100,
-        configuration="hostname MCP-Test-Node\n!end\n",
-    )
     for i in range(3):
-        node_create.label = f"MCP Test Node {i + 1}"
-        node_result = await main_mcp_client.call_tool(name="add_node_to_cml_lab", arguments={"lab_name": lab_name, "node": node_create})
+        node_result = await main_mcp_client.call_tool(
+            name="add_node_to_cml_lab",
+            arguments={"lab_name": lab_name, "node_definition": "iol-xe", "label": f"MCP Test Node {i + 1}", "configuration": "hostname MCP-Test-Node\n!end\n"},
+        )
         assert isinstance(node_result.content, list)
         assert len(node_result.content) > 0
         assert isinstance(node_result.content[0], TextContent)
@@ -790,13 +770,10 @@ async def test_clone_cml_lab(main_mcp_client: Client[FastMCPTransport], created_
     source_lab_id = created_lab[0]
 
     # Add a router node to the source lab
-    node_create = NodeCreate(
-        node_definition="iol-xe",
-        label="Test Router",
-        x=100,
-        y=100,
+    node_result = await main_mcp_client.call_tool(
+        name="add_node_to_cml_lab",
+        arguments={"lab_name": "Branch Test", "node_definition": "iol-xe", "label": "Test Router"},
     )
-    node_result = await main_mcp_client.call_tool(name="add_node_to_cml_lab", arguments={"lab_name": "Branch Test", "node": node_create})
     assert isinstance(node_result.content, list)
     assert len(node_result.content) > 0
 
@@ -843,13 +820,10 @@ async def test_clone_cml_lab_live(main_mcp_client: Client[FastMCPTransport], cre
     source_lab_name = str(source_lab_create.title)
 
     # Add a router node to the source lab
-    node_create = NodeCreate(
-        node_definition="iol-xe",
-        label="Test Router",
-        x=100,
-        y=100,
+    node_result = await main_mcp_client.call_tool(
+        name="add_node_to_cml_lab",
+        arguments={"lab_name": source_lab_name, "node_definition": "iol-xe", "label": "Test Router"},
     )
-    node_result = await main_mcp_client.call_tool(name="add_node_to_cml_lab", arguments={"lab_name": source_lab_name, "node": node_create})
     assert isinstance(node_result.content, list)
     assert len(node_result.content) > 0
 

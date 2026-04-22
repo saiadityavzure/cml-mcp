@@ -8,6 +8,7 @@ Node management tools for CML MCP server.
 import asyncio
 import json
 import logging
+import random
 
 import httpx
 from fastmcp import Context
@@ -18,7 +19,7 @@ from mcp.types import INVALID_REQUEST, METHOD_NOT_FOUND
 from cml_mcp.cml.simple_webserver.schemas.common import UUID4Type
 from cml_mcp.cml.simple_webserver.schemas.nodes import Node, NodeConfigurationContent, NodeCreate
 from cml_mcp.cml_client import CMLClient
-from cml_mcp.tools.dependencies import get_cml_client_dep, parse_str_arg, resolve_lab_id, resolve_node_id
+from cml_mcp.tools.dependencies import get_cml_client_dep, resolve_lab_id, resolve_node_id
 
 logger = logging.getLogger("cml-mcp.tools.nodes")
 
@@ -45,6 +46,26 @@ async def wipe_node(lid: UUID4Type, nid: UUID4Type, client: CMLClient) -> None:
         client (CMLClient): The CML client instance.
     """
     await client.put(f"/labs/{lid}/nodes/{nid}/wipe_disks")
+
+
+_PLACEMENT_MIN = 100
+_PLACEMENT_MAX = 2000
+_PLACEMENT_CLEARANCE = 200
+_PLACEMENT_RETRIES = 20
+
+
+def _find_free_position(existing_nodes: list[dict]) -> tuple[int, int]:
+    """Pick a random canvas position that doesn't overlap any existing node."""
+    occupied = [(n.get("x", 0), n.get("y", 0)) for n in existing_nodes]
+    for _ in range(_PLACEMENT_RETRIES):
+        x = random.randint(_PLACEMENT_MIN, _PLACEMENT_MAX)
+        y = random.randint(_PLACEMENT_MIN, _PLACEMENT_MAX)
+        if all(abs(x - ox) >= _PLACEMENT_CLEARANCE or abs(y - oy) >= _PLACEMENT_CLEARANCE for ox, oy in occupied):
+            return x, y
+    # Fallback: extend the canvas area if all retries exhausted
+    x = random.randint(_PLACEMENT_MAX, _PLACEMENT_MAX * 2)
+    y = random.randint(_PLACEMENT_MAX, _PLACEMENT_MAX * 2)
+    return x, y
 
 
 def register_tools(mcp):  # noqa: C901
@@ -93,27 +114,48 @@ def register_tools(mcp):  # noqa: C901
     )
     async def add_node_to_cml_lab(
         lab_name: str,
-        node: NodeCreate | dict | str,
+        node_definition: str,
+        label: str,
+        image_definition: str | None = None,
+        ram: int | None = None,
+        cpus: int | None = None,
+        cpu_limit: int | None = None,
+        data_volume: int | None = None,
+        boot_disk_size: int | None = None,
+        tags: list[str] | None = None,
+        configuration: str | None = None,
     ) -> UUID4Type:
         """
         Add node to lab by lab name. Returns node UUID. Auto-creates default interfaces per node definition.
-        Required: x (-15000 to 15000), y (-15000 to 15000), label (1-128 chars), node_definition (e.g., "alpine", "iosv").
-        node_definition values come from get_cml_node_definitions.
-        Optional: image_definition, ram (MB), cpus, cpu_limit (%), data_volume (GB), boot_disk_size (GB), tags, configuration, parameters.
+        Canvas position is chosen automatically — existing nodes are checked to avoid overlap.
+        node_definition: node type ID, e.g. "alpine", "iosv", "iol-xe" — use get_cml_node_definitions to list available values.
+        label: display name for the node (1-128 chars).
+        ram: memory in MB. cpus: vCPU count. cpu_limit: CPU limit %. data_volume/boot_disk_size: disk sizes in GB.
+        configuration: startup config as a plain string of device commands.
         """
         client = get_cml_client_dep()
         try:
             lid = await resolve_lab_id(lab_name, client)
-            # XXX The dict/str handling is a workaround for some LLMs that pass a JSON string
-            # representation of the argument object.
-            if isinstance(node, str):
-                logger.debug(f"node passed as string (len={len(node)}): {node!r}")
-                try:
-                    node = NodeCreate(**parse_str_arg(node))
-                except Exception as parse_err:
-                    raise ToolError(f"node must be an object, got invalid string: {parse_err}")
-            elif isinstance(node, dict):
-                node = NodeCreate(**node)
+            existing = await client.get(
+                f"/labs/{lid}/nodes",
+                params={"data": True, "operational": False, "exclude_configurations": True},
+            )
+            x, y = _find_free_position(list(existing))
+            logger.debug(f"Auto-placed node '{label}' at ({x}, {y}) in lab '{lab_name}'")
+            node_kwargs: dict = {"node_definition": node_definition, "label": label, "x": x, "y": y}
+            for k, v in {
+                "image_definition": image_definition,
+                "ram": ram,
+                "cpus": cpus,
+                "cpu_limit": cpu_limit,
+                "data_volume": data_volume,
+                "boot_disk_size": boot_disk_size,
+                "tags": tags,
+                "configuration": configuration,
+            }.items():
+                if v is not None:
+                    node_kwargs[k] = v
+            node = NodeCreate(**node_kwargs)
             resp = await client.post(
                 f"/labs/{lid}/nodes", params={"populate_interfaces": True}, data=node.model_dump(mode="json", exclude_defaults=True)
             )
