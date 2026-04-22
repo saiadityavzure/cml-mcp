@@ -34,8 +34,6 @@ import httpx
 import yaml
 from fastmcp import Context
 from fastmcp.exceptions import ToolError
-from mcp.shared.exceptions import McpError
-from mcp.types import INVALID_REQUEST, METHOD_NOT_FOUND
 
 from cml_mcp.cml.simple_webserver.schemas.common import UserName, UUID4Type
 from cml_mcp.cml.simple_webserver.schemas.labs import Lab, LabRequest, LabTitle
@@ -325,24 +323,10 @@ def register_tools(mcp):  # noqa: C901
     )
     async def wipe_cml_lab(lab_name: str, ctx: Context) -> bool:
         """
-        Wipe lab by name. Erases all node data/configurations. CRITICAL: Always ask "Confirm wipe of [item]?" and wait for user's "yes"
-        before wiping.
+        Wipe lab by name. Erases all node data/configurations. CRITICAL: Always ask "Confirm wipe of [lab_name]?" and wait for user's "yes" before calling this tool.
         """
         client = get_cml_client_dep()
         try:
-            elicit_supported = True
-            try:
-                result = await ctx.elicit("Are you sure you want to wipe the lab?", response_type=None)
-            except McpError as me:
-                if me.error.code == METHOD_NOT_FOUND or me.error.code == INVALID_REQUEST:
-                    elicit_supported = False
-                else:
-                    raise me
-            except Exception as e:
-                logger.debug(f"elicit() failed (possibly client disconnect): {type(e).__name__}: {e}")
-                elicit_supported = False
-            if elicit_supported and result.action != "accept":
-                raise Exception("Wipe operation cancelled by user.")
             lid = await resolve_lab_id(lab_name, client)
             await run_with_heartbeat(wipe_lab(lid, client), ctx, f"Wiping lab '{lab_name}'...")
             return True
@@ -363,24 +347,10 @@ def register_tools(mcp):  # noqa: C901
     )
     async def delete_cml_lab(lab_name: str, ctx: Context) -> bool:
         """
-        Delete lab by name. Auto-stops and wipes if needed. CRITICAL: Always ask "Confirm deletion of [item]?" and wait for user's "yes"
-        before deleting.
+        Delete lab by name. Auto-stops and wipes if needed. CRITICAL: Always ask "Confirm deletion of [lab_name]?" and wait for user's "yes" before calling this tool.
         """
         client = get_cml_client_dep()
         try:
-            elicit_supported = True
-            try:
-                result = await ctx.elicit("Are you sure you want to delete the lab?", response_type=None)
-            except McpError as me:
-                if me.error.code == METHOD_NOT_FOUND or me.error.code == INVALID_REQUEST:
-                    elicit_supported = False
-                else:
-                    raise me
-            except Exception as e:
-                logger.debug(f"elicit() failed (possibly client disconnect): {type(e).__name__}: {e}")
-                elicit_supported = False
-            if elicit_supported and result.action != "accept":
-                raise Exception("Delete operation cancelled by user.")
             lid = await resolve_lab_id(lab_name, client)
             await run_with_heartbeat(stop_lab(lid, client), ctx, f"Stopping lab '{lab_name}' before deletion...")
             await run_with_heartbeat(wipe_lab(lid, client), ctx, f"Wiping lab '{lab_name}'...")
